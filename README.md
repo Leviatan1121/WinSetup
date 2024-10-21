@@ -17,7 +17,7 @@ irm 'https://github.com/Leviatan1121/WinSetup/releases/download/latest/start.ps1
 ```
 
 ## Download
-Or either download the file to the Desktop.
+Or either downloading the file to the Desktop.
 
 ### cmd
 ```bat

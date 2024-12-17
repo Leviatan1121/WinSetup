@@ -1,27 +1,28 @@
 @echo off
 
 set gcc=mingw64\bin\gcc.exe
-set output=out\WinSetup.exe
+set exe=WinSetup.exe
+set output=out\%exe%
 
 if exist %output% (
-    tasklist | find "WinSetup.exe" >nul 2>&1
+    tasklist | find %exe% >nul 2>&1
     if not errorlevel 1 (
-        echo Stopping WinSetup...
-        taskkill /IM "WinSetup.exe" /F >nul 2>&1
+        echo Stopping %exe%...
+        taskkill /IM %exe% /F >nul 2>&1
         echo Done. & echo:
     )
-    echo Deleting WinSetup...
+    echo Deleting %exe%...
     del %output%
     echo Done. & echo:
 )
 
-echo Compiling WinSetup...
+echo Compiling %exe%...
 if not exist out mkdir out
 %gcc% -o %output% src\main.c src\functions.c -mwindows
 
 if exist %output% (
     echo Done. & echo:
-    echo Starting WinSetup...
+    echo Starting %exe%...
     start %output%
     echo Done.
 )

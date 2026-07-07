@@ -2,10 +2,14 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
+    if (-not $PSCommandPath) {
+        Write-Error "Debloat.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat)."
+        exit 1
+    }
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath
     )
-    exit
+    exit $LASTEXITCODE
 }
 
 #region Widgets

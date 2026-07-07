@@ -140,6 +140,6 @@ Write-Host "=========================================================" -Foregrou
 
 #region Restart Explorer to apply changes
 # Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-# Start-Sleep -Seconds 1
+Start-Sleep -Seconds 3
 # Start-Process explorer.exe
 #endregion

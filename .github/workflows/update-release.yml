@@ -1,0 +1,33 @@
+name: Actualizar Release Fija
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Descargar el código del repositorio
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # 2. Actualizar la Release existente con los nuevos archivos
+      - name: Actualizar Release Fija
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.0.1
+          name: Versión Estable
+          body: |
+            Última actualización automática de los scripts de PowerShell.
+            Último commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            *.ps1

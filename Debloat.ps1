@@ -130,6 +130,10 @@ Remove-BuiltInApps @(
 )
 #endregion
 
+Write-Host "=========================================================" -ForegroundColor Cyan
+Write-Host "[!] Debloat apps applied successfully." -ForegroundColor Cyan
+Write-Host "=========================================================" -ForegroundColor Cyan
+
 #region Restart Explorer to apply changes
 # Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 # Start-Sleep -Seconds 1

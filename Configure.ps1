@@ -43,8 +43,12 @@ Set-ItemProperty -Path $SearchPath -Name "SearchboxTaskbarMode" -Value 0 -Type D
 Set-ItemProperty -Path $SearchPath -Name "SearchboxTaskbarModeCache" -Value 1 -Type DWord
 #endregion
 
+Write-Host "=========================================================" -ForegroundColor Cyan
+Write-Host "[!] Configuration settings applied successfully." -ForegroundColor Cyan
+Write-Host "=========================================================" -ForegroundColor Cyan
+
 #region Restart Explorer to apply changes
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
-Start-Process explorer.exe
+#Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+#Start-Sleep -Seconds 1
+#Start-Process explorer.exe
 #endregion

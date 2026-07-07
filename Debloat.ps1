@@ -115,6 +115,44 @@ function Remove-BuiltInApps {
     }
 }
 
+function Remove-AppsByPattern {
+    param([string[]]$Patterns)
+
+    foreach ($pattern in $Patterns) {
+        Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } |
+            ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue }
+
+        Get-AppxPackage -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } |
+            ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }
+
+        Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like $pattern -or $_.PackageName -like $pattern } |
+            ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
+    }
+}
+
+function Uninstall-Win32AppByName {
+    param([string]$DisplayNamePattern)
+
+    $uninstallRoots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+
+    foreach ($root in $uninstallRoots) {
+        Get-ChildItem -Path $root -ErrorAction SilentlyContinue | ForEach-Object {
+            $app = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if ($app.DisplayName -like $DisplayNamePattern -and $app.UninstallString) {
+                $cmd = $app.UninstallString -replace '/I', '/X' -replace '/i', '/x'
+                Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd, '/quiet', '/norestart' -Wait -NoNewWindow -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Remove-BuiltInApps @(
     'Microsoft.WindowsFeedbackHub'           # Feedback Hub
     'Microsoft.BingWeather'                  # Weather
@@ -136,11 +174,23 @@ Remove-BuiltInApps @(
     'Microsoft.OneConnect'                   # Mobile Plans
     'Microsoft.MicrosoftSolitaireCollection' # Solitaire Collection
   # 'Microsoft.GamingApp'                  # Casual Games (Xbox)
-    '5319275A.WhatsAppDesktop'             # WhatsApp
 )
 
+# WhatsApp (Store, Win32 installer, or winget)
+Get-Process -Name 'WhatsApp', 'WhatsAppDesktop' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Remove-AppsByPattern @('*WhatsApp*', '*5319275A*')
+Uninstall-Win32AppByName '*WhatsApp*'
 winget uninstall --name "WhatsApp" --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
+
+# Introduccion / Get Started (embedded in MicrosoftWindows.Client.CBS; cannot be safely removed)
+Remove-AppsByPattern @('*Getstarted*', '*StartExperiencesApp*')
+$explorerPolicy = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
+if (-not (Test-Path $explorerPolicy)) { New-Item -Path $explorerPolicy -Force | Out-Null }
+Set-ItemProperty -Path $explorerPolicy -Name 'HideRecentlyAddedApps' -Value 1 -Type DWord
+Set-ItemProperty -Path $ExplorerPath -Name 'Start_IrisRecommendations' -Value 0 -Type DWord -ErrorAction SilentlyContinue
 #endregion
 
 #region Disable automatic installation of apps

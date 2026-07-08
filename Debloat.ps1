@@ -205,14 +205,23 @@ Remove-AppsByPattern @('*Getstarted*', '*StartExperiencesApp*')
 #endregion
 
 #region Remote support tools (optional uninstall)
-if (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'A restart is required to finish removal. Choose Restart later in the dialog to avoid rebooting now.') {
-    $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
-    if (Test-Path $mstsc) {
-        Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
-    }
+$mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
+if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'A restart is required to finish removal. Choose Restart later in the dialog to avoid rebooting now.')) {
+    Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
 }
 
-if (Confirm-OptionalUninstall -AppName 'Quick Assist') {
+$quickAssistInstalled = @(
+    Get-AppxPackage -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
+    Get-AppxPackage -AllUsers -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
+) | Where-Object { $_ } | Select-Object -First 1
+
+if (-not $quickAssistInstalled) {
+    $quickAssistInstalled = Get-WindowsCapability -Online -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'App.Support.QuickAssist*' -and $_.State -eq 'Installed' } |
+        Select-Object -First 1
+}
+
+if ($quickAssistInstalled -and (Confirm-OptionalUninstall -AppName 'Quick Assist')) {
     Remove-BuiltInApps @('MicrosoftCorporationII.QuickAssist')
     Remove-AppsByPattern @('*QuickAssist*')
 

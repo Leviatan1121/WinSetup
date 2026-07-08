@@ -12,6 +12,10 @@ if (-not $isAdmin) {
     exit $LASTEXITCODE
 }
 
+#region Disable Fast Startup
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -Value 0 -Type DWord
+#endregion
+
 #region Widgets
 # Disable system-wide and uninstall the Web Experience Pack
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"

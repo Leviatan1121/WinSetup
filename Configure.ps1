@@ -259,6 +259,14 @@ foreach ($entry in @{
 [CursorSpi]::SystemParametersInfo([CursorSpi]::SPI_SETCURSORS, 0, 0, $cursorRefreshFlags) | Out-Null
 #endregion
 
+#region Power
+# Turn off display after 3 minutes (AC and battery); no sleep on AC or battery
+powercfg /change monitor-timeout-ac 3 | Out-Null
+powercfg /change monitor-timeout-dc 3 | Out-Null
+powercfg /change standby-timeout-ac 0 | Out-Null
+powercfg /change standby-timeout-dc 0 | Out-Null
+#endregion
+
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "[!] Configuration settings applied successfully." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan

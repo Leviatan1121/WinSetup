@@ -226,10 +226,19 @@ if (Test-Path $applyCursorDst) {
     & $applyCursorDst
 
     $taskName = 'WinSetup-ApplyCursor'
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyCursorDst`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    $taskArgument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyCursorDst`""
+    try {
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgument
+        $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop | Out-Null
+    } catch {
+        $startupPath = [Environment]::GetFolderPath('Startup')
+        $launcherVbs = Join-Path $startupPath 'WinSetup-ApplyCursor.vbs'
+        $vbsContent = "CreateObject(""Wscript.Shell"").Run ""powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File """"""$applyCursorDst"""""""", 0, False"
+        Set-Content -Path $launcherVbs -Value $vbsContent -Encoding ASCII
+        Write-Warning "Could not register logon task ($($_.Exception.Message)); using Startup shortcut instead."
+    }
 }
 #endregion
 

@@ -37,6 +37,10 @@ if (-not (Test-Path $locationPath)) { New-Item -Path $locationPath -Force | Out-
 Set-ItemProperty -Path $locationPath -Name 'Value' -Value 'Deny' -Type String
 Set-ItemProperty -Path $locationPath -Name 'ShowGlobalPrompts' -Value 0 -Type DWord
 
+$locationNonPackaged = Join-Path $locationPath 'NonPackaged'
+if (-not (Test-Path $locationNonPackaged)) { New-Item -Path $locationNonPackaged -Force | Out-Null }
+Set-ItemProperty -Path $locationNonPackaged -Name 'Value' -Value 'Deny' -Type String
+
 $locationOverridePath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CPSS\Store\UserLocationOverridePrivacySetting'
 if (-not (Test-Path $locationOverridePath)) { New-Item -Path $locationOverridePath -Force | Out-Null }
 Set-ItemProperty -Path $locationOverridePath -Name 'Value' -Value 1 -Type DWord

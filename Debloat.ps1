@@ -16,6 +16,17 @@ if (-not $isAdmin) {
 Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -Value 0 -Type DWord
 #endregion
 
+#region Privacy > Location (system-wide master switch; HKCU alone is not enough)
+$locationHklm = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+if (-not (Test-Path $locationHklm)) { New-Item -Path $locationHklm -Force | Out-Null }
+Set-ItemProperty -Path $locationHklm -Name 'Value' -Value 'Deny' -Type String
+Set-ItemProperty -Path $locationHklm -Name 'ShowGlobalPrompts' -Value 0 -Type DWord
+
+$locationNonPackagedHklm = Join-Path $locationHklm 'NonPackaged'
+if (-not (Test-Path $locationNonPackagedHklm)) { New-Item -Path $locationNonPackagedHklm -Force | Out-Null }
+Set-ItemProperty -Path $locationNonPackagedHklm -Name 'Value' -Value 'Deny' -Type String
+#endregion
+
 #region Widgets
 # Disable system-wide and uninstall the Web Experience Pack
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"

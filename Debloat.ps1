@@ -62,6 +62,7 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
 
 winget uninstall --id Microsoft.Copilot_8wekyb3d8bbwe --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --name "Microsoft Copilot" --silent --accept-source-agreements --disable-interactivity 2>$null
+Remove-Item -Path "$env:USERPROFILE\.copilot" -Recurse -Force -ErrorAction SilentlyContinue
 #endregion
 
 #region OneDrive
@@ -94,6 +95,7 @@ $oneDrivePolicyPath = 'HKLM:\Software\Policies\Microsoft\Windows\OneDrive'
 if (-not (Test-Path $oneDrivePolicyPath)) { New-Item -Path $oneDrivePolicyPath -Force | Out-Null }
 Set-ItemProperty -Path $oneDrivePolicyPath -Name 'DisableFileSyncNGSC' -Value 1 -Type DWord
 Set-ItemProperty -Path $oneDrivePolicyPath -Name 'DisableFileSync' -Value 1 -Type DWord
+Remove-Item -Path "$env:USERPROFILE\OneDrive" -Recurse -Force -ErrorAction SilentlyContinue
 #endregion
 
 #region Built-in apps
@@ -153,12 +155,25 @@ function Uninstall-Win32AppByName {
     }
 }
 
+function Confirm-OptionalUninstall {
+    param(
+        [string]$AppName,
+        [string]$Note
+    )
+
+    Write-Host ""
+    Write-Host "Uninstall '$AppName'? [Enter = Yes, any key = No]" -ForegroundColor Yellow
+    if ($Note) { Write-Host $Note -ForegroundColor DarkGray }
+    $response = Read-Host
+    return [string]::IsNullOrWhiteSpace($response)
+}
+
 Remove-BuiltInApps @(
     'Microsoft.WindowsFeedbackHub'           # Feedback Hub
     'Microsoft.BingWeather'                  # Weather
     'Microsoft.YourPhone'                    # Phone Link
     'MicrosoftCorporationII.MicrosoftFamily' # Family Safety
-    'Microsoft.Getstarted'                   # Get Started (Introduccion)
+    'Microsoft.Getstarted'                   # Get Started
     'Microsoft.StartExperiencesApp'          # Start Experiences (Get Started on newer builds)
     'Microsoft.MicrosoftJournal'             # Journal
     'Microsoft.MicrosoftOfficeHub'           # Microsoft 365 Copilot
@@ -185,12 +200,89 @@ winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreemen
 winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
 
-# Introduccion / Get Started (embedded in MicrosoftWindows.Client.CBS; cannot be safely removed)
+# Get Started (embedded in MicrosoftWindows.Client.CBS; cannot be safely removed)
 Remove-AppsByPattern @('*Getstarted*', '*StartExperiencesApp*')
-$explorerPolicy = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
+#endregion
+
+#region Remote support tools (optional uninstall)
+if (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'A restart is required to finish removal. Choose Restart later in the dialog to avoid rebooting now.') {
+    $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
+    if (Test-Path $mstsc) {
+        Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
+    }
+}
+
+if (Confirm-OptionalUninstall -AppName 'Quick Assist') {
+    Remove-BuiltInApps @('MicrosoftCorporationII.QuickAssist')
+    Remove-AppsByPattern @('*QuickAssist*')
+
+    Get-WindowsCapability -Online -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'App.Support.QuickAssist*' -and $_.State -eq 'Installed' } |
+        ForEach-Object { Remove-WindowsCapability -Online -Name $_.Name -ErrorAction SilentlyContinue | Out-Null }
+}
+#endregion
+
+#region Taskbar: unpin all apps for all profiles
+$userProfiles = @('C:\Users\Default') + (
+    Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
+    ForEach-Object { $_.FullName }
+)
+
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+foreach ($profileRoot in $userProfiles) {
+    $pinnedTaskbar = Join-Path $profileRoot 'AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+    Get-ChildItem -Path $pinnedTaskbar -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -eq '.lnk' } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $ntuser = Join-Path $profileRoot 'NTUSER.DAT'
+    if (-not (Test-Path $ntuser)) { continue }
+
+    $hiveName = "WinSetup_$([guid]::NewGuid().ToString('N'))"
+    & reg.exe load "HKU\$hiveName" $ntuser *> $null
+    if ($LASTEXITCODE -ne 0) { continue }
+
+    $taskband = "Registry::HKU\$hiveName\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband"
+    foreach ($prop in @('Favorites', 'FavoritesResolve', 'FavoritesChanges', 'FavoritesVersion')) {
+        Remove-ItemProperty -Path $taskband -Name $prop -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 200
+    & reg.exe unload "HKU\$hiveName" *> $null
+}
+#endregion
+
+#region Start Menu
+# Layout only: apply empty start2.bin to all user profiles (requires admin). Registry prefs are in Configure.ps1.
+$emptyStartLayout = [Convert]::FromBase64String(@'
+4nrhSwH8TRucAIEL3m5RhU5aX0cAW7FJilySr5CE+V6aoBj7A+HZAaADAABc9u55LN8F4borYyXEGl8Q5+RZ+qERszeqUhhZXDvcjTF6rgdprauITLqPgMVMbSZbRsLN/O5uMjSLEr6nWYIwsMJkZMnZyZrhR3PugUhUKOYDqwySCY6/CPkL/Ooz/5j2R2hwWRGqc7ZsJxDFM1DWofjUiGjDUny+Y8UjowknQVaPYao0PC4bygKEbeZqCqRvSgPalSc53OFqCh2FHydzl09fChaos385QvF40EDEgSO8U9/dntAeNULwuuZBi7BkWSIOmWN1l4e+TZbtSJXwn+EINAJhRHyCSNeku21dsw+cMoLorMKnRmhJMLvE+CCdgNKIaPo/Krizva1+bMsI8bSkV/CxaCTLXodb/NuBYCsIHY1sTvbwSBRNMPvccw43RJCUKZRkBLkCVfW24ANbLfHXofHDMLxxFNUpBPSgzGHnueHknECcf6J4HCFBqzvSH1TjQ3S6J8tq2yaQ+jFNkxGRMushdXNNiTNjDFYMJNvgRL2lu63NPE+Cxy+IKC1NdKLweFdOGZr2mvKAw7t/fxmCTieUgLkegDomZbHL6anjy4SkjSCnfTBUNtxc0X3VJiha4wq/ArRrTtVnzcUcX+CI4BNTicx+X2eXugI+EHKjgaQS7fXHqQGEUMUeHMCXlgWUZ5kE3LFTjVifyVIGqYNDuqt7T9l7DWByiuRariySa7tiN1gA2ALKYlRsjsQL7xpxHnT1hi/9b+UuyC46cYQaDUcKDc4BGReJP2gDIyZfudLpgUPc7YfH9doiMcWimSylbKFtsI3Mfo0HONxet5XjzjDoziduYk2dFoFfz19uaRcOHtASKzaGdtk6RC+Tm4BbU/7PlbvHEKJZ720AxOQkzU9U8RWAHHsPUVfWzYoQc2dN8OQ/JlUAqe8+PI05ST4m3LoUpBKB+oU0H84aet5etGpIi4CthvazGencFObWJWNRzxk9BXIX2YoAdXB8b7JFwlxVdhgzZK0zkkrzSSmX9iJcNoi6Tp+RtnljzLTAv6xh8gwytIW5F2e5sVh7aiqo4sji0aE+ToqyNPV7eE9Idi2ZNeEbnJ9LX127uOl5jB280hs0caXLUrYiR15+Y31wtlD8JVeTDxDDac6v+e3C4VX+28mg9bYQ7NGYXZc7yZANC/nWTn+/hkTZUvR0gi+PUz4o/DSdKzbvVCAlqdjArcKkWW4r/WKUSLskoOKRPxdNLPVBl2S6blje4LvBzulpeHWubXWfCW4ILuOI
+'@)
+
+Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+foreach ($stateDir in @(
+    'C:\Users\Default\AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState'
+)) {
+    if (-not (Test-Path $stateDir)) { New-Item -Path $stateDir -ItemType Directory -Force | Out-Null }
+    [IO.File]::WriteAllBytes((Join-Path $stateDir 'start2.bin'), $emptyStartLayout)
+}
+Get-ChildItem -Path 'C:\Users\*\AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState' -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { [IO.File]::WriteAllBytes((Join-Path $_.FullName 'start2.bin'), $emptyStartLayout) }
+#endregion
+
+#region Start Menu search: disable Bing/web results (system-wide)
+$searchPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'
+if (-not (Test-Path $searchPolicy)) { New-Item -Path $searchPolicy -Force | Out-Null }
+Set-ItemProperty -Path $searchPolicy -Name 'ConnectedSearchUseWeb' -Value 0 -Type DWord
+Set-ItemProperty -Path $searchPolicy -Name 'ConnectedSearchUseWebOverMeteredConnections' -Value 0 -Type DWord
+Set-ItemProperty -Path $searchPolicy -Name 'DisableWebSearch' -Value 1 -Type DWord
+
+$explorerPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
 if (-not (Test-Path $explorerPolicy)) { New-Item -Path $explorerPolicy -Force | Out-Null }
-Set-ItemProperty -Path $explorerPolicy -Name 'HideRecentlyAddedApps' -Value 1 -Type DWord
-Set-ItemProperty -Path $ExplorerPath -Name 'Start_IrisRecommendations' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $explorerPolicy -Name 'DisableSearchBoxSuggestions' -Value 1 -Type DWord
 #endregion
 
 #region Disable automatic installation of apps
@@ -198,14 +290,6 @@ Set-ItemProperty -Path $ExplorerPath -Name 'Start_IrisRecommendations' -Value 0 
 $cloudContentPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
 if (-not (Test-Path $cloudContentPolicy)) { New-Item -Path $cloudContentPolicy -Force | Out-Null }
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsConsumerFeatures' -Value 1 -Type DWord
-
-# HKCU: block silent/suggested app installs for the current user
-$contentDelivery = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
-if (-not (Test-Path $contentDelivery)) { New-Item -Path $contentDelivery -Force | Out-Null }
-Set-ItemProperty -Path $contentDelivery -Name 'SilentInstalledAppsEnabled' -Value 0 -Type DWord
-Set-ItemProperty -Path $contentDelivery -Name 'ContentDeliveryAllowed' -Value 0 -Type DWord
-Set-ItemProperty -Path $contentDelivery -Name 'OemPreInstalledAppsEnabled' -Value 0 -Type DWord
-Set-ItemProperty -Path $contentDelivery -Name 'PreInstalledAppsEnabled' -Value 0 -Type DWord
 #endregion
 
 Write-Host "=========================================================" -ForegroundColor Cyan
@@ -213,7 +297,8 @@ Write-Host "[!] Debloat apps applied successfully." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 
 #region Restart Explorer to apply changes
-# Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
-# Start-Process explorer.exe
+Start-Process explorer.exe
 #endregion

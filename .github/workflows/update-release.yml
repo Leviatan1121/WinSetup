@@ -31,3 +31,5 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             *.ps1
+            Setup.bat
+            Assets/Cursors.zip

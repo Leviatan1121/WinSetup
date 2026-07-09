@@ -1,15 +1,21 @@
 # WinSetup — system-wide removals, policies, and elevated privacy (HKLM + all users).
-# Self-elevates via UAC when not admin. Run last in Setup.bat.
-# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
+# Self-elevates when run alone; Setup.bat uses Setup-Elevated.ps1 (one UAC) with -WinSetupElevated.
+# Run order: Setup.bat → Configure → Privacy → Performance → Setup-Elevated (Debloat) → pointer
+
+param([switch]$WinSetupElevated)
 
 #region Elevation
-# Re-launch this script elevated; required for HKLM, services, and all-user Appx removal.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not $isAdmin) {
+if ($WinSetupElevated) {
+    if (-not $isAdmin) {
+        Write-Error 'Debloat.ps1 -WinSetupElevated requires an administrator session.'
+        exit 1
+    }
+} elseif (-not $isAdmin) {
     if (-not $PSCommandPath) {
-        Write-Error "Debloat.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat)."
+        Write-Error 'Debloat.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat).'
         exit 1
     }
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(

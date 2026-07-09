@@ -1,12 +1,19 @@
 # WinSetup — optional removal of Quick Assist and Remote Desktop Connection.
-# Self-elevates. Run last in Setup.bat (RDP uninstall may prompt for restart).
-# Order: Quick Assist first, then Remote Desktop Connection.
+# Self-elevates when run alone; Setup.bat uses Setup-Elevated.ps1 with -WinSetupElevated.
+# Order: Quick Assist first, then Remote Desktop Connection (last — may prompt restart).
+
+param([switch]$WinSetupElevated)
 
 #region Elevation
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not $isAdmin) {
+if ($WinSetupElevated) {
+    if (-not $isAdmin) {
+        Write-Error 'RemoteSupport.ps1 -WinSetupElevated requires an administrator session.'
+        exit 1
+    }
+} elseif (-not $isAdmin) {
     if (-not $PSCommandPath) {
         Write-Error 'RemoteSupport.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat).'
         exit 1

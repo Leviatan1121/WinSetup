@@ -1,6 +1,6 @@
 # WinSetup — apply Settings > Accessibility > Mouse pointer (size, style, custom color).
 # Dot-source from Configure.ps1 or run directly: AllowFile.bat .\Set-MousePointer.ps1
-# Custom color (type 6) requires *_eoa.cur — seeded from Cursors.zip beside this script.
+# Custom color (type 6) requires *_eoa.cur — from Cursors.zip or %LocalAppData%\WinSetup\Cursors.
 
 #region Preferences
 # PointerType: 1 white, 2 black, 3 inverted, 6 custom (CursorColor).
@@ -13,8 +13,24 @@ $script:PointerType = 6
 function Set-WinSetupMousePointer {
     [CmdletBinding()]
     param(
-        [string]$CursorsZip = (Join-Path $PSScriptRoot 'Cursors.zip')
+        [string]$CursorsZip
     )
+
+    $persistDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
+    $persistCursors = Join-Path $persistDir 'Cursors'
+    $persistZip = Join-Path $persistDir 'Cursors.zip'
+
+    if (-not $CursorsZip) {
+        foreach ($candidate in @(
+            (Join-Path $PSScriptRoot 'Cursors.zip'),
+            $persistZip
+        )) {
+            if (Test-Path $candidate) {
+                $CursorsZip = $candidate
+                break
+            }
+        }
+    }
 
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes' `
         -Name 'ThemeChangesMousePointers' -Value 0 -Type DWord -ErrorAction SilentlyContinue
@@ -56,17 +72,14 @@ public static class WinSetupInput {
             New-Item -Path $userCursorDir -ItemType Directory -Force | Out-Null
         }
 
-        $seedDirs = @(
-            (Join-Path $PSScriptRoot 'Cursors'),
-            (Join-Path $env:LOCALAPPDATA 'WinSetup\Cursors')
-        )
         $seeded = $false
-
-        if (Test-Path $CursorsZip) {
+        if ($CursorsZip -and (Test-Path $CursorsZip)) {
             Expand-Archive -Path $CursorsZip -DestinationPath $userCursorDir -Force
             $seeded = $true
-        } else {
-            foreach ($seedDir in $seedDirs) {
+        }
+
+        if (-not $seeded) {
+            foreach ($seedDir in @($persistCursors, (Join-Path $PSScriptRoot 'Cursors'))) {
                 if (-not (Test-Path $seedDir)) { continue }
                 Get-ChildItem -Path $seedDir -Filter '*_eoa.cur' -ErrorAction SilentlyContinue |
                     Copy-Item -Destination $userCursorDir -Force
@@ -137,22 +150,32 @@ public static class WinSetupInput {
 }
 
 function Install-WinSetupMousePointerPersistence {
-    # Copy assets to a stable path (Setup.bat deletes %TEMP%\WinSetup) and re-apply once at next logon.
+    param(
+        [string]$SourceDir = $PSScriptRoot
+    )
+
     $persistDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
     $persistCursors = Join-Path $persistDir 'Cursors'
+    $persistZip = Join-Path $persistDir 'Cursors.zip'
     $persistScript = Join-Path $persistDir 'Set-MousePointer.ps1'
-    $sourceZip = Join-Path $PSScriptRoot 'Cursors.zip'
-    $scriptSource = Join-Path $PSScriptRoot 'Set-MousePointer.ps1'
+    $logonScript = Join-Path $persistDir 'Apply-MousePointerAtLogon.ps1'
+    $taskName = 'WinSetup-MousePointer'
 
     if (-not (Test-Path $persistDir)) { New-Item -Path $persistDir -ItemType Directory -Force | Out-Null }
     if (-not (Test-Path $persistCursors)) { New-Item -Path $persistCursors -ItemType Directory -Force | Out-Null }
 
-    if (Test-Path $scriptSource) {
-        Copy-Item -Path $scriptSource -Destination $persistScript -Force
+    foreach ($pair in @(
+        @{ Src = (Join-Path $SourceDir 'Set-MousePointer.ps1'); Dst = $persistScript }
+        @{ Src = (Join-Path $SourceDir 'Apply-MousePointerAtLogon.ps1'); Dst = $logonScript }
+        @{ Src = (Join-Path $SourceDir 'Cursors.zip'); Dst = $persistZip }
+    )) {
+        if (Test-Path $pair.Src) {
+            Copy-Item -Path $pair.Src -Destination $pair.Dst -Force
+        }
     }
 
-    if (Test-Path $sourceZip) {
-        Expand-Archive -Path $sourceZip -DestinationPath $persistCursors -Force
+    if (Test-Path $persistZip) {
+        Expand-Archive -Path $persistZip -DestinationPath $persistCursors -Force
     }
 
     $userCursorDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors'
@@ -161,11 +184,21 @@ function Install-WinSetupMousePointerPersistence {
             Copy-Item -Destination $userCursorDir -Force
     }
 
-    if (Test-Path $persistScript) {
-        $runOnce = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$persistScript`""
-        Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
-            -Name 'WinSetup-MousePointer' -Value $runOnce -Type String
-    }
+    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
+        -Name 'WinSetup-MousePointer' -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path $logonScript)) { return }
+
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$logonScript`""
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+        -Settings $settings -Principal $principal -Force | Out-Null
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

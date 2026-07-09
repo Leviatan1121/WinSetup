@@ -34,7 +34,9 @@ $startupPath = [Environment]::GetFolderPath('Startup')
 Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.bat') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.vbs') -Force -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName 'WinSetup-ApplyCursor' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'WinSetup-MousePointer' -Confirm:$false -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WinSetup-ApplyCursor' -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'WinSetup-MousePointer' -ErrorAction SilentlyContinue
 #endregion
 
 #region Personalization > Themes > Dark theme

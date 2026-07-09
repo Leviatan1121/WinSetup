@@ -1,12 +1,33 @@
 # WinSetup — visual performance preset (sysdm.cpl + Accessibility > Visual effects).
-# Registry-first. Covers UserPreferencesMask, VisualFXSetting, and related HKCU keys.
+# HKCU by default; -SystemOnly for HKLM tweaks (called from Setup-Elevated.ps1).
+# Run order: Setup.bat → Configure → Privacy → Performance → Setup-Elevated → pointer persist
+
+param([switch]$SystemOnly)
+
+#region Performance Options > Advanced > Processor scheduling and MMCSS (HKLM)
+if ($SystemOnly) {
+    $priorityPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl'
+    $mmcssPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+    $gameDvrPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR'
+
+    Set-ItemProperty -Path $priorityPath -Name 'Win32PrioritySeparation' -Value 38 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $mmcssPath -Name 'SystemResponsiveness' -Value 0 -Type DWord
+    Set-ItemProperty -Path $mmcssPath -Name 'NetworkThrottlingIndex' -Value 0xFFFFFFFF -Type DWord
+    if (-not (Test-Path $gameDvrPolicy)) { New-Item -Path $gameDvrPolicy -Force | Out-Null }
+    Set-ItemProperty -Path $gameDvrPolicy -Name 'AllowGameDVR' -Value 0 -Type DWord
+
+    Write-Host '=========================================================' -ForegroundColor Cyan
+    Write-Host '[!] Performance (system) applied.' -ForegroundColor Cyan
+    Write-Host '=========================================================' -ForegroundColor Cyan
+    return
+}
+#endregion
+
 # Usage: AllowFile.bat .\Performance.ps1
 #
 # sysdm.cpl: custom preset — best performance + Explorer thumbnails + ClearType.
 # Accessibility: Animation effects OFF, Transparency effects OFF.
 # Gaming: Game DVR/Bar OFF, Game Mode OFF (OBS + Discord + VTube Studio workflow).
-# HKLM: Win32PrioritySeparation, SystemResponsiveness, NetworkThrottlingIndex.
-# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
 # After running: sign out and back in (or reboot) before verifying in sysdm.cpl.
 
 #region Paths
@@ -84,33 +105,6 @@ Set-ItemProperty -Path $gameBarPath -Name 'AllowAutoGameMode' -Value 0 -Type DWo
 Set-ItemProperty -Path $gameBarPath -Name 'AutoGameModeEnabled' -Value 0 -Type DWord
 Set-ItemProperty -Path $gameBarPath -Name 'ShowStartupPanel' -Value 0 -Type DWord -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $gameBarPath -Name 'UseNexusForGameBarEnabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-#endregion
-
-#region Performance Options > Advanced > Processor scheduling and MMCSS (HKLM)
-$priorityPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl'
-$mmcssPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
-$gameDvrPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR'
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if ($isAdmin) {
-    Set-ItemProperty -Path $priorityPath -Name 'Win32PrioritySeparation' -Value 38 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $mmcssPath -Name 'SystemResponsiveness' -Value 0 -Type DWord
-    Set-ItemProperty -Path $mmcssPath -Name 'NetworkThrottlingIndex' -Value 0xFFFFFFFF -Type DWord
-    if (-not (Test-Path $gameDvrPolicy)) { New-Item -Path $gameDvrPolicy -Force | Out-Null }
-    Set-ItemProperty -Path $gameDvrPolicy -Name 'AllowGameDVR' -Value 0 -Type DWord
-} else {
-    $hkmlCmd = @"
-Set-ItemProperty -Path '$priorityPath' -Name 'Win32PrioritySeparation' -Value 38 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path '$mmcssPath' -Name 'SystemResponsiveness' -Value 0 -Type DWord
-Set-ItemProperty -Path '$mmcssPath' -Name 'NetworkThrottlingIndex' -Value 0xFFFFFFFF -Type DWord
-if (-not (Test-Path '$gameDvrPolicy')) { New-Item -Path '$gameDvrPolicy' -Force | Out-Null }
-Set-ItemProperty -Path '$gameDvrPolicy' -Name 'AllowGameDVR' -Value 0 -Type DWord
-"@
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $hkmlCmd
-    )
-}
 #endregion
 
 #region Apply changes

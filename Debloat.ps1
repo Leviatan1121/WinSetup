@@ -1,3 +1,9 @@
+# WinSetup — system-wide removals, policies, and elevated privacy (HKLM + all users).
+# Self-elevates via UAC when not admin. Run last in Setup.bat.
+# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
+
+#region Elevation
+# Re-launch this script elevated; required for HKLM, services, and all-user Appx removal.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -11,12 +17,33 @@ if (-not $isAdmin) {
     )
     exit $LASTEXITCODE
 }
+#endregion
 
-#region Disable Fast Startup
+#region System > Power > Fast startup
+# Disable hiberboot (fast startup) — avoids stale driver/state issues on some hardware.
 Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -Value 0 -Type DWord
 #endregion
 
-#region Privacy > Location (system-wide master switch; HKCU alone is not enough)
+#region Privacy > Location (elevated)
+# Turns OFF device location services and suppresses location prompts system-wide.
+# Privacy.ps1 handles per-user HKCU consent; this section handles HKLM + CAM cache.
+$adminFlows = Join-Path $env:WINDIR 'System32\SystemSettingsAdminFlows.exe'
+if (Test-Path $adminFlows) {
+    # Toggle 1→0 forces CAM to register the global OFF state (visible in Procmon on 24H2+).
+    & $adminFlows SetCamSystemGlobal location 1 | Out-Null
+    Start-Sleep -Milliseconds 400
+    & $adminFlows SetCamSystemGlobal location 0 | Out-Null
+    & $adminFlows SetGeolocationMaster 1 | Out-Null
+    Start-Sleep -Milliseconds 400
+    & $adminFlows SetGeolocationMaster 0 | Out-Null
+}
+
+# Group Policy: Turn off location scripting / sensors.
+$locationPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'
+if (-not (Test-Path $locationPolicy)) { New-Item -Path $locationPolicy -Force | Out-Null }
+Set-ItemProperty -Path $locationPolicy -Name 'DisableLocation' -Value 1 -Type DWord
+
+# Machine-wide consent store (Settings reads HKLM on elevated toggles).
 $locationHklm = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
 if (-not (Test-Path $locationHklm)) { New-Item -Path $locationHklm -Force | Out-Null }
 Set-ItemProperty -Path $locationHklm -Name 'Value' -Value 'Deny' -Type String
@@ -25,10 +52,40 @@ Set-ItemProperty -Path $locationHklm -Name 'ShowGlobalPrompts' -Value 0 -Type DW
 $locationNonPackagedHklm = Join-Path $locationHklm 'NonPackaged'
 if (-not (Test-Path $locationNonPackagedHklm)) { New-Item -Path $locationNonPackagedHklm -Force | Out-Null }
 Set-ItemProperty -Path $locationNonPackagedHklm -Name 'Value' -Value 'Deny' -Type String
+Set-ItemProperty -Path $locationNonPackagedHklm -Name 'ShowGlobalPrompts' -Value 0 -Type DWord
+
+# Pulse ShowGlobalPrompts 1→0 so CapabilityConsentStorage.db rebuilds with notify=OFF on 26200+.
+# HKCU consent values are set in Privacy.ps1; this section only refreshes the CAM cache.
+$locationConsentParentHkcu = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore'
+$locationHkcu = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+$locationNonPackagedHkcu = Join-Path $locationHkcu 'NonPackaged'
+foreach ($promptPath in @($locationConsentParentHkcu, $locationHkcu, $locationNonPackagedHkcu)) {
+    Set-ItemProperty -Path $promptPath -Name 'ShowGlobalPrompts' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+}
+Start-Sleep -Milliseconds 300
+foreach ($promptPath in @($locationConsentParentHkcu, $locationHkcu, $locationNonPackagedHkcu)) {
+    Set-ItemProperty -Path $promptPath -Name 'ShowGlobalPrompts' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+}
+
+# Delete CAM SQLite caches; camsvc/lfsvc recreate them from registry on next start.
+$camDbDir = Join-Path $env:ProgramData 'Microsoft\Windows\CapabilityAccessManager'
+foreach ($svc in @('lfsvc', 'camsvc')) {
+    Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+}
+foreach ($dbBase in @('CapabilityAccessManager', 'CapabilityConsentStorage')) {
+    foreach ($suffix in @('.db', '.db-wal', '.db-shm')) {
+        Remove-Item (Join-Path $camDbDir ($dbBase + $suffix)) -Force -ErrorAction SilentlyContinue
+    }
+}
+foreach ($svc in @('camsvc', 'lfsvc')) {
+    Start-Service -Name $svc -ErrorAction SilentlyContinue
+}
+
+Get-Process -Name 'SystemSettings' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 #endregion
 
-#region Widgets
-# Disable system-wide and uninstall the Web Experience Pack
+#region Personalization > Taskbar > Widgets
+# Hide widgets on the taskbar and remove the Web Experience Pack (News and interests).
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 Set-ItemProperty -Path $ExplorerPath -Name "TaskbarDa" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
@@ -50,8 +107,8 @@ winget uninstall --id 9MSSGKG348SP --silent --accept-source-agreements --disable
 winget uninstall "Windows Web Experience Pack" --silent --accept-source-agreements --disable-interactivity 2>$null
 #endregion
 
-#region Copilot
-# Hide from taskbar, disable via policy, and uninstall the app
+#region Copilot and Recall
+# Taskbar button, Copilot Appx, Windows AI policies (Recall snapshots off).
 Set-ItemProperty -Path $ExplorerPath -Name "ShowCopilotButton" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
 foreach ($hive in @('HKLM:\SOFTWARE\Policies', 'HKCU:\Software\Policies')) {
@@ -62,7 +119,13 @@ foreach ($hive in @('HKLM:\SOFTWARE\Policies', 'HKCU:\Software\Policies')) {
     $aiPath = "$hive\Microsoft\Windows\WindowsAI"
     if (-not (Test-Path $aiPath)) { New-Item -Path $aiPath -Force | Out-Null }
     Set-ItemProperty -Path $aiPath -Name "RemoveMicrosoftCopilotApp" -Value 1 -Type DWord
+    Set-ItemProperty -Path $aiPath -Name 'DisableAIDataAnalysis' -Value 1 -Type DWord
 }
+
+$windowsAiPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+if (-not (Test-Path $windowsAiPolicy)) { New-Item -Path $windowsAiPolicy -Force | Out-Null }
+Set-ItemProperty -Path $windowsAiPolicy -Name 'AllowRecallEnablement' -Value 0 -Type DWord
+Set-ItemProperty -Path $windowsAiPolicy -Name 'TurnOffSavingSnapshots' -Value 1 -Type DWord
 
 foreach ($package in @('Microsoft.Copilot', 'Microsoft.Windows.Copilot')) {
     Get-AppxPackage -Name $package -ErrorAction SilentlyContinue |
@@ -81,7 +144,7 @@ Remove-Item -Path "$env:USERPROFILE\.copilot" -Recurse -Force -ErrorAction Silen
 #endregion
 
 #region OneDrive
-# Stop, uninstall, and block reinstall
+# Stop sync client, uninstall all channels, and block reinstall via policy.
 Get-Process -Name OneDrive -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 winget uninstall --name "Microsoft OneDrive" --silent --accept-source-agreements --disable-interactivity 2>$null
@@ -113,10 +176,10 @@ Set-ItemProperty -Path $oneDrivePolicyPath -Name 'DisableFileSync' -Value 1 -Typ
 Remove-Item -Path "$env:USERPROFILE\OneDrive" -Recurse -Force -ErrorAction SilentlyContinue
 #endregion
 
-#region Built-in apps
+#region Built-in apps > Removal helpers
 function Remove-BuiltInApps {
     param([string[]]$PackageNames)
-
+    # Installed (all users + current), then provisioned image packages.
     foreach ($name in $PackageNames) {
         Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq $name -or $_.Name -like "$name*" } |
@@ -134,7 +197,7 @@ function Remove-BuiltInApps {
 
 function Remove-AppsByPattern {
     param([string[]]$Patterns)
-
+    # Wildcard match on Name / PackageFullName across all removal channels.
     foreach ($pattern in $Patterns) {
         Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } |
@@ -152,7 +215,7 @@ function Remove-AppsByPattern {
 
 function Uninstall-Win32AppByName {
     param([string]$DisplayNamePattern)
-
+    # Walk Uninstall registry keys and run each matching Quiet uninstall string.
     $uninstallRoots = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -182,7 +245,10 @@ function Confirm-OptionalUninstall {
     $response = Read-Host
     return [string]::IsNullOrWhiteSpace($response)
 }
+#endregion
 
+#region Built-in apps > Package list
+# Remove provisioned + installed Appx for each package name (current user and all users).
 Remove-BuiltInApps @(
     'Microsoft.WindowsFeedbackHub'           # Feedback Hub
     'Microsoft.BingWeather'                  # Weather
@@ -214,12 +280,10 @@ winget uninstall --name "WhatsApp" --silent --accept-source-agreements --disable
 winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
-
-# Get Started (embedded in MicrosoftWindows.Client.CBS; cannot be safely removed)
-Remove-AppsByPattern @('*Getstarted*', '*StartExperiencesApp*')
 #endregion
 
-#region Remote support tools (optional uninstall)
+#region Remote support tools (optional)
+# Interactive: Enter = uninstall, any other key = skip.
 $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
 if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'A restart is required to finish removal. Choose Restart later in the dialog to avoid rebooting now.')) {
     Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
@@ -246,7 +310,8 @@ if ($quickAssistInstalled -and (Confirm-OptionalUninstall -AppName 'Quick Assist
 }
 #endregion
 
-#region Taskbar: unpin all apps for all profiles
+#region Taskbar > Unpin all apps (all profiles)
+# Clears Quick Launch .lnk pins and Taskband registry for Default + every local user profile.
 $userProfiles = @('C:\Users\Default') + (
     Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
@@ -278,8 +343,8 @@ foreach ($profileRoot in $userProfiles) {
 }
 #endregion
 
-#region Start Menu
-# Layout only: apply empty start2.bin to all user profiles (requires admin). Registry prefs are in Configure.ps1.
+#region Start > Layout (all profiles)
+# Empty start2.bin for Default and every user — layout only; HKCU prefs are in Configure.ps1.
 $emptyStartLayout = [Convert]::FromBase64String(@'
 4nrhSwH8TRucAIEL3m5RhU5aX0cAW7FJilySr5CE+V6aoBj7A+HZAaADAABc9u55LN8F4borYyXEGl8Q5+RZ+qERszeqUhhZXDvcjTF6rgdprauITLqPgMVMbSZbRsLN/O5uMjSLEr6nWYIwsMJkZMnZyZrhR3PugUhUKOYDqwySCY6/CPkL/Ooz/5j2R2hwWRGqc7ZsJxDFM1DWofjUiGjDUny+Y8UjowknQVaPYao0PC4bygKEbeZqCqRvSgPalSc53OFqCh2FHydzl09fChaos385QvF40EDEgSO8U9/dntAeNULwuuZBi7BkWSIOmWN1l4e+TZbtSJXwn+EINAJhRHyCSNeku21dsw+cMoLorMKnRmhJMLvE+CCdgNKIaPo/Krizva1+bMsI8bSkV/CxaCTLXodb/NuBYCsIHY1sTvbwSBRNMPvccw43RJCUKZRkBLkCVfW24ANbLfHXofHDMLxxFNUpBPSgzGHnueHknECcf6J4HCFBqzvSH1TjQ3S6J8tq2yaQ+jFNkxGRMushdXNNiTNjDFYMJNvgRL2lu63NPE+Cxy+IKC1NdKLweFdOGZr2mvKAw7t/fxmCTieUgLkegDomZbHL6anjy4SkjSCnfTBUNtxc0X3VJiha4wq/ArRrTtVnzcUcX+CI4BNTicx+X2eXugI+EHKjgaQS7fXHqQGEUMUeHMCXlgWUZ5kE3LFTjVifyVIGqYNDuqt7T9l7DWByiuRariySa7tiN1gA2ALKYlRsjsQL7xpxHnT1hi/9b+UuyC46cYQaDUcKDc4BGReJP2gDIyZfudLpgUPc7YfH9doiMcWimSylbKFtsI3Mfo0HONxet5XjzjDoziduYk2dFoFfz19uaRcOHtASKzaGdtk6RC+Tm4BbU/7PlbvHEKJZ720AxOQkzU9U8RWAHHsPUVfWzYoQc2dN8OQ/JlUAqe8+PI05ST4m3LoUpBKB+oU0H84aet5etGpIi4CthvazGencFObWJWNRzxk9BXIX2YoAdXB8b7JFwlxVdhgzZK0zkkrzSSmX9iJcNoi6Tp+RtnljzLTAv6xh8gwytIW5F2e5sVh7aiqo4sji0aE+ToqyNPV7eE9Idi2ZNeEbnJ9LX127uOl5jB280hs0caXLUrYiR15+Y31wtlD8JVeTDxDDac6v+e3C4VX+28mg9bYQ7NGYXZc7yZANC/nWTn+/hkTZUvR0gi+PUz4o/DSdKzbvVCAlqdjArcKkWW4r/WKUSLskoOKRPxdNLPVBl2S6blje4LvBzulpeHWubXWfCW4ILuOI
 '@)
@@ -297,7 +362,8 @@ Get-ChildItem -Path 'C:\Users\*\AppData\Local\Packages\Microsoft.Windows.StartMe
     ForEach-Object { [IO.File]::WriteAllBytes((Join-Path $_.FullName 'start2.bin'), $emptyStartLayout) }
 #endregion
 
-#region Start Menu search: disable Bing/web results (system-wide)
+#region Search > Disable web results (system-wide)
+# HKLM policies: no Bing/cloud results in Start or taskbar search.
 $searchPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'
 if (-not (Test-Path $searchPolicy)) { New-Item -Path $searchPolicy -Force | Out-Null }
 Set-ItemProperty -Path $searchPolicy -Name 'ConnectedSearchUseWeb' -Value 0 -Type DWord
@@ -309,18 +375,64 @@ if (-not (Test-Path $explorerPolicy)) { New-Item -Path $explorerPolicy -Force | 
 Set-ItemProperty -Path $explorerPolicy -Name 'DisableSearchBoxSuggestions' -Value 1 -Type DWord
 #endregion
 
-#region Disable automatic installation of apps
-# HKLM: "Turn off Microsoft consumer experiences" (blocks suggested apps system-wide)
+#region Apps > Disable consumer experience and Spotlight
+# Blocks suggested Store apps, lock screen Spotlight, and related cloud content.
 $cloudContentPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
 if (-not (Test-Path $cloudContentPolicy)) { New-Item -Path $cloudContentPolicy -Force | Out-Null }
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsConsumerFeatures' -Value 1 -Type DWord
+Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightFeatures' -Value 1 -Type DWord
+Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightOnActionCenter' -Value 1 -Type DWord
+Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightOnSettings' -Value 1 -Type DWord
+Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableThirdPartySuggestions' -Value 1 -Type DWord
+#endregion
+
+#region Privacy > Diagnostic data and telemetry (HKLM)
+foreach ($dataCollectionPath in @(
+    'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection'
+)) {
+    if (-not (Test-Path $dataCollectionPath)) { New-Item -Path $dataCollectionPath -Force | Out-Null }
+    Set-ItemProperty -Path $dataCollectionPath -Name 'AllowTelemetry' -Value 0 -Type DWord
+    Set-ItemProperty -Path $dataCollectionPath -Name 'MaxTelemetryAllowed' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+}
+
+$dataCollectionPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+Set-ItemProperty -Path $dataCollectionPolicy -Name 'DisableOneSettingsDownloads' -Value 1 -Type DWord
+Set-ItemProperty -Path $dataCollectionPolicy -Name 'DoNotShowFeedbackNotifications' -Value 1 -Type DWord
+
+$systemPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+if (-not (Test-Path $systemPolicy)) { New-Item -Path $systemPolicy -Force | Out-Null }
+Set-ItemProperty -Path $systemPolicy -Name 'PublishUserActivities' -Value 0 -Type DWord
+Set-ItemProperty -Path $systemPolicy -Name 'EnableActivityFeed' -Value 0 -Type DWord
+Set-ItemProperty -Path $systemPolicy -Name 'UploadUserActivities' -Value 0 -Type DWord
+
+foreach ($telemetrySvc in @('DiagTrack', 'dmwappushservice')) {
+    Set-Service -Name $telemetrySvc -StartupType Disabled -ErrorAction SilentlyContinue
+    Stop-Service -Name $telemetrySvc -Force -ErrorAction SilentlyContinue
+}
+#endregion
+
+#region Windows Update > Delivery Optimization
+# HTTP-only downloads; no peer caching or upload to other PCs.
+$deliveryOptimization = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization'
+if (-not (Test-Path $deliveryOptimization)) { New-Item -Path $deliveryOptimization -Force | Out-Null }
+Set-ItemProperty -Path $deliveryOptimization -Name 'DODownloadMode' -Value 0 -Type DWord
+
+$deliveryOptimizationPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization'
+if (-not (Test-Path $deliveryOptimizationPolicy)) { New-Item -Path $deliveryOptimizationPolicy -Force | Out-Null }
+Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DODownloadMode' -Value 0 -Type DWord
+Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOMaxUploadBandwidth' -Value 0 -Type DWord
+Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOPercentageMaxForegroundBandwidth' -Value 0 -Type DWord
+Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOPercentageMaxBackgroundBandwidth' -Value 0 -Type DWord
+Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOAllowUploadWhileOnBattery' -Value 0 -Type DWord
 #endregion
 
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "[!] Debloat apps applied successfully." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 
-#region Restart Explorer to apply changes
+#region Shell > Restart Explorer
+# Apply taskbar, Start, and pin changes without a full reboot.
 Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
 Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3

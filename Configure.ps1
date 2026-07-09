@@ -1,40 +1,163 @@
-#region Dark Theme
+# WinSetup — user-level appearance, shell, and power settings (HKCU).
+# Maps to Settings pages where noted. Requires no elevation.
+# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
+# Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
+
+#region Accessibility > Mouse pointer and motion
+# Same registry keys as Settings > Accessibility > Mouse pointer and touch.
+# PointerType: 1 = white, 2 = black, 3 = inverted, 6 = custom (CursorColor).
+# PointerSize: 1–4 (slider); 3 → 64px base, 4 → 80px.
+$PointerSize = 3
+$PointerColor = 16760576 # COLORREF 0x00FFBF00 (turquoise)
+$PointerType = 6
+
+# Themes must not overwrite the pointer scheme (set before dark.theme).
+Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes' `
+    -Name 'ThemeChangesMousePointers' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+# Disable "Enhance pointer precision" (mouse acceleration).
+$mousePath = 'HKCU:\Control Panel\Mouse'
+Set-ItemProperty -Path $mousePath -Name 'MouseSpeed' -Value '0'
+Set-ItemProperty -Path $mousePath -Name 'MouseThreshold1' -Value '0'
+Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
+
+Add-Type @'
+using System.Runtime.InteropServices;
+public static class WinSetupInput {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, int[] pvParam, uint fWinIni);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, uint pvParam, uint fWinIni);
+    public const uint SPI_SETMOUSE = 0x0004;
+    public const uint SPI_SETCURSORS = 0x0057;
+    public const uint SPI_SETCURSORSIZE = 0x2029;
+    public const uint SPIF_UPDATEINIFILE = 0x01;
+    public const uint SPIF_SENDCHANGE = 0x02;
+}
+'@ -ErrorAction SilentlyContinue
+
+[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETMOUSE, 0, [int[]]@(0, 0, 0), 0x03)
+
+$accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
+$cursorsPath = 'HKCU:\Control Panel\Cursors'
+$userCursorDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors'
+$cursorBaseSize = if ($PointerSize -ge 4) { 80 } else { 64 }
+
+if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }
+Set-ItemProperty -Path $accessibilityPath -Name 'CursorSize' -Value $PointerSize -Type DWord
+Set-ItemProperty -Path $accessibilityPath -Name 'CursorType' -Value $PointerType -Type DWord
+if ($PointerType -eq 6) {
+    Set-ItemProperty -Path $accessibilityPath -Name 'CursorColor' -Value $PointerColor -Type DWord
+}
+
+if (-not (Test-Path $cursorsPath)) { New-Item -Path $cursorsPath -Force | Out-Null }
+Set-ItemProperty -Path $cursorsPath -Name 'CursorBaseSize' -Value $cursorBaseSize -Type DWord
+Set-ItemProperty -Path $cursorsPath -Name 'Scheme Source' -Value 2 -Type DWord
+
+if ($PointerType -eq 6) {
+    if (-not (Test-Path $userCursorDir)) { New-Item -Path $userCursorDir -ItemType Directory -Force | Out-Null }
+
+    $hasEoaCursors = @(Get-ChildItem -Path $userCursorDir -Filter '*_eoa.cur' -ErrorAction SilentlyContinue).Count -gt 0
+    if (-not $hasEoaCursors) {
+        $cursorZip = Join-Path $PSScriptRoot 'Cursors.zip'
+        if (Test-Path $cursorZip) {
+            Expand-Archive -Path $cursorZip -DestinationPath $userCursorDir -Force
+            $hasEoaCursors = $true
+        } else {
+            Write-Warning 'Custom pointer: Cursors.zip not found. Use Settings > Accessibility > Mouse pointer once, or add Cursors.zip to the release.'
+        }
+    }
+
+    if ($hasEoaCursors) {
+        Set-ItemProperty -Path $cursorsPath -Name '(Default)' -Value 'Windows custom' -Type String
+        $cursorDir = '%LocalAppData%\Microsoft\Windows\Cursors\'
+        foreach ($entry in @{
+            Arrow       = 'arrow_eoa.cur'
+            Help        = 'helpsel_eoa.cur'
+            AppStarting = 'busy_eoa.cur'
+            Wait        = 'wait_eoa.cur'
+            Crosshair   = 'cross_eoa.cur'
+            IBeam       = 'ibeam_eoa.cur'
+            NWPen       = 'pen_eoa.cur'
+            No          = 'unavail_eoa.cur'
+            SizeNS      = 'ns_eoa.cur'
+            SizeWE      = 'ew_eoa.cur'
+            SizeNWSE    = 'nwse_eoa.cur'
+            SizeNESW    = 'nesw_eoa.cur'
+            SizeAll     = 'move_eoa.cur'
+            UpArrow     = 'up_eoa.cur'
+            Hand        = 'link_eoa.cur'
+            Person      = 'person_eoa.cur'
+            Pin         = 'pin_eoa.cur'
+        }.GetEnumerator()) {
+            Set-ItemProperty -Path $cursorsPath -Name $entry.Key -Value ($cursorDir + $entry.Value) -Type ExpandString
+        }
+    }
+} else {
+    $schemeName = switch ($PointerType) { 2 { 'Windows Black' } 3 { 'Windows Inverted' } default { 'Windows Default' } }
+    $suffix = switch ($PointerType) { 2 { 'r' } 3 { 'i' } default { 'l' } }
+    $sysDir = '%SystemRoot%\cursors\'
+    Set-ItemProperty -Path $cursorsPath -Name '(Default)' -Value $schemeName -Type String
+    foreach ($entry in @{
+        Arrow       = "arrow_$suffix.cur"
+        Help        = "help_$suffix.cur"
+        AppStarting = "wait_$suffix.cur"
+        Wait        = "wait_$suffix.cur"
+        Crosshair   = "cross_$suffix.cur"
+        IBeam       = "beam_$suffix.cur"
+        NWPen       = "pen_$suffix.cur"
+        No          = "no_$suffix.cur"
+        SizeNS      = "size1_$suffix.cur"
+        SizeWE      = "size2_$suffix.cur"
+        SizeNWSE    = "size3_$suffix.cur"
+        SizeNESW    = "size4_$suffix.cur"
+        SizeAll     = "move_$suffix.cur"
+        UpArrow     = "up_$suffix.cur"
+        Hand        = "hand_$suffix.cur"
+    }.GetEnumerator()) {
+        Set-ItemProperty -Path $cursorsPath -Name $entry.Key -Value ($sysDir + $entry.Value) -Type ExpandString
+    }
+}
+
+$cursorFlags = [WinSetupInput]::SPIF_UPDATEINIFILE -bor [WinSetupInput]::SPIF_SENDCHANGE
+[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETCURSORSIZE, 0, [uint32]$cursorBaseSize, [WinSetupInput]::SPIF_UPDATEINIFILE)
+[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETCURSORS, 0, 0, $cursorFlags)
+
+# Remove legacy logon re-apply hooks from older WinSetup versions.
+$startupPath = [Environment]::GetFolderPath('Startup')
+Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.bat') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.vbs') -Force -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'WinSetup-ApplyCursor' -Confirm:$false -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WinSetup-ApplyCursor' -ErrorAction SilentlyContinue
+#endregion
+
+#region Personalization > Themes > Dark theme
+# Apply after pointer scheme — ThemeChangesMousePointers prevents overwrite.
 Start-Process -FilePath "C:\Windows\Resources\Themes\dark.theme" -Wait
 Start-Sleep -Seconds 3
 Get-Process -Name "SystemSettings" -ErrorAction SilentlyContinue | Stop-Process -Force
 #endregion
 
-#region Disable Transparency Effects
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0
-#endregion
-
-#region Disable Animation Effects (Accessibility > Visual effects)
-$desktopPath = 'HKCU:\Control Panel\Desktop'
-$metricsPath = 'HKCU:\Control Panel\Desktop\WindowMetrics'
-$mask = (Get-ItemProperty -Path $desktopPath).UserPreferencesMask.Clone()
-$mask[0] = $mask[0] -band (-bnot 0x0E)
-$mask[1] = $mask[1] -band (-bnot 0x0C)
-$mask[4] = $mask[4] -band (-bnot 0x02)
-Set-ItemProperty -Path $desktopPath -Name 'UserPreferencesMask' -Type Binary -Value $mask
-Set-ItemProperty -Path $metricsPath -Name 'MinAnimate' -Value '0'
-#endregion
-
-#region Enable End Task (End Task in Taskbar)
+#region System > Developer options > End Task
+# Right-click taskbar → End task (developer setting).
 $TaskbarDevPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"
 if (-not (Test-Path $TaskbarDevPath)) { New-Item -Path $TaskbarDevPath -Force | Out-Null }
 Set-ItemProperty -Path $TaskbarDevPath -Name "TaskbarEndTask" -Value 1 -Type DWord
 #endregion
 
-#region Multi Task: No show browser tabs in Alt + Tab
+#region Multitasking > Alt + Tab
+# Value 3 = open windows only (no browser tabs as separate entries).
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "MultiTaskingAltTabFilter" -Value 3
 #endregion
 
-#region File Explorer
+#region File Explorer > View and navigation
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+# Show file extensions, show hidden files, open to This PC.
 Set-ItemProperty -Path $ExplorerPath -Name "HideFileExt" -Value 0 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "Hidden" -Value 1 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "LaunchTo" -Value 1 -Type DWord
 
+# Unpin Home and Gallery from the navigation pane.
 foreach ($clsid in @(
     '{f874310e-b6b7-47dc-bc84-b9e6b38f5903}', # Home (Inicio)
     '{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}'  # Gallery (Galería)
@@ -43,7 +166,7 @@ foreach ($clsid in @(
     if (-not (Test-Path $clsidPath)) { New-Item -Path $clsidPath -Force | Out-Null }
     Set-ItemProperty -Path $clsidPath -Name 'System.IsPinnedToNameSpaceTree' -Value 0 -Type DWord
 }
-# Remove unused folders from user's directory
+# Remove legacy shell folders from the user profile (Contacts, Favorites, etc.).
 $userDirectory = "$env:USERPROFILE\"
 $unusedFolders = @(
     'Contacts',
@@ -55,13 +178,13 @@ $unusedFolders = @(
 foreach ($folder in $unusedFolders) {
     $folderPath = Join-Path $userDirectory $folder
     if (Test-Path $folderPath) {
-        Remove-Item -Path $folderPath -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $folderPath -Force -Recurse -ErrorAction SilentlyContinue
     }
 }
 #endregion
 
-#region Taskbar
-# Hide search box
+#region Taskbar > Search, grouping, and auto-hide
+# Hide the taskbar search box and disable Bing/Cortana integration in search.
 $SearchPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"
 if (-not (Test-Path $SearchPath)) { New-Item -Path $SearchPath -Force | Out-Null }
 Set-ItemProperty -Path $SearchPath -Name "SearchboxTaskbarMode" -Value 0 -Type DWord
@@ -97,23 +220,10 @@ if (Test-Path $mmStuckRects) {
         }
 }
 
-# Unpin all apps (shortcuts + Taskband cache; explorer restart at end of script)
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-
-$pinnedTaskbar = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-Get-ChildItem -Path $pinnedTaskbar -Force -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -eq '.lnk' } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
-
-$taskband = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband'
-foreach ($prop in @('Favorites', 'FavoritesResolve', 'FavoritesChanges', 'FavoritesVersion')) {
-    Remove-ItemProperty -Path $taskband -Name $prop -ErrorAction SilentlyContinue
-}
 #endregion
 
-#region Start Menu
-# User preferences only (no Policies/* keys — those lock Settings as "managed by organization")
+#region Start > Layout and recommendations
+# HKCU preferences only — avoid Policies/* keys (they mark Settings as organization-managed).
 $startPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Start'
 if (-not (Test-Path $startPath)) { New-Item -Path $startPath -Force | Out-Null }
 Set-ItemProperty -Path $startPath -Name 'AllAppsViewMode' -Value 1 -Type DWord
@@ -144,7 +254,8 @@ foreach ($name in @(
     'SystemPaneSuggestionsEnabled', 'SilentInstalledAppsEnabled', 'SoftLandingEnabled',
     'ContentDeliveryAllowed', 'OemPreInstalledAppsEnabled', 'PreInstalledAppsEnabled',
     'SubscribedContent-338388Enabled', 'SubscribedContent-338393Enabled', 'SubscribedContent-353694Enabled',
-    'SubscribedContent-353696Enabled'
+    'SubscribedContent-353696Enabled',
+    'RotatingLockScreenEnabled', 'RotatingLockScreenOverlayEnabled', 'SubscribedContent-338387Enabled'
 )) {
     Set-ItemProperty -Path $contentDelivery -Name $name -Value 0 -Type DWord -ErrorAction SilentlyContinue
 }
@@ -154,96 +265,11 @@ $searchSettings = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSetting
 if (-not (Test-Path $searchSettings)) { New-Item -Path $searchSettings -Force | Out-Null }
 Set-ItemProperty -Path $searchSettings -Name 'IsMSACloudSearchEnabled' -Value 0 -Type DWord
 Set-ItemProperty -Path $searchSettings -Name 'IsAADCloudSearchEnabled' -Value 0 -Type DWord
-
-# Replace start2.bin with empty layout (deleting it restores OEM defaults with pins)
-$emptyStartLayout = [Convert]::FromBase64String(@'
-4nrhSwH8TRucAIEL3m5RhU5aX0cAW7FJilySr5CE+V6aoBj7A+HZAaADAABc9u55LN8F4borYyXEGl8Q5+RZ+qERszeqUhhZXDvcjTF6rgdprauITLqPgMVMbSZbRsLN/O5uMjSLEr6nWYIwsMJkZMnZyZrhR3PugUhUKOYDqwySCY6/CPkL/Ooz/5j2R2hwWRGqc7ZsJxDFM1DWofjUiGjDUny+Y8UjowknQVaPYao0PC4bygKEbeZqCqRvSgPalSc53OFqCh2FHydzl09fChaos385QvF40EDEgSO8U9/dntAeNULwuuZBi7BkWSIOmWN1l4e+TZbtSJXwn+EINAJhRHyCSNeku21dsw+cMoLorMKnRmhJMLvE+CCdgNKIaPo/Krizva1+bMsI8bSkV/CxaCTLXodb/NuBYCsIHY1sTvbwSBRNMPvccw43RJCUKZRkBLkCVfW24ANbLfHXofHDMLxxFNUpBPSgzGHnueHknECcf6J4HCFBqzvSH1TjQ3S6J8tq2yaQ+jFNkxGRMushdXNNiTNjDFYMJNvgRL2lu63NPE+Cxy+IKC1NdKLweFdOGZr2mvKAw7t/fxmCTieUgLkegDomZbHL6anjy4SkjSCnfTBUNtxc0X3VJiha4wq/ArRrTtVnzcUcX+CI4BNTicx+X2eXugI+EHKjgaQS7fXHqQGEUMUeHMCXlgWUZ5kE3LFTjVifyVIGqYNDuqt7T9l7DWByiuRariySa7tiN1gA2ALKYlRsjsQL7xpxHnT1hi/9b+UuyC46cYQaDUcKDc4BGReJP2gDIyZfudLpgUPc7YfH9doiMcWimSylbKFtsI3Mfo0HONxet5XjzjDoziduYk2dFoFfz19uaRcOHtASKzaGdtk6RC+Tm4BbU/7PlbvHEKJZ720AxOQkzU9U8RWAHHsPUVfWzYoQc2dN8OQ/JlUAqe8+PI05ST4m3LoUpBKB+oU0H84aet5etGpIi4CthvazGencFObWJWNRzxk9BXIX2YoAdXB8b7JFwlxVdhgzZK0zkkrzSSmX9iJcNoi6Tp+RtnljzLTAv6xh8gwytIW5F2e5sVh7aiqo4sji0aE+ToqyNPV7eE9Idi2ZNeEbnJ9LX127uOl5jB280hs0caXLUrYiR15+Y31wtlD8JVeTDxDDac6v+e3C4VX+28mg9bYQ7NGYXZc7yZANC/nWTn+/hkTZUvR0gi+PUz4o/DSdKzbvVCAlqdjArcKkWW4r/WKUSLskoOKRPxdNLPVBl2S6blje4LvBzulpeHWubXWfCW4ILuOI
-'@)
-
-$startMenuState = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState'
-if (-not (Test-Path $startMenuState)) { New-Item -Path $startMenuState -ItemType Directory -Force | Out-Null }
-Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-[IO.File]::WriteAllBytes((Join-Path $startMenuState 'start2.bin'), $emptyStartLayout)
+# Empty start2.bin for all profiles is applied in Debloat.ps1 (elevated).
 #endregion
 
-#region Mouse
-# Accessibility > Mouse pointer: Turquoise preset, size 3 (slider 1-15; base size 64 px)
-# Color is baked into *_eoa.cur files. Windows may regenerate white cursors at logon;
-# Apply-Cursor.ps1 is deployed to %LOCALAPPDATA%\WinSetup\ and runs at sign-in.
-$userCursorDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors'
-$cursorStore = Join-Path $env:LOCALAPPDATA 'WinSetup\Cursors'
-$winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
-$cursorReleaseUrl = 'https://github.com/Leviatan1121/WinSetup/releases/latest/download/Cursors.zip'
-
-if (-not (Test-Path $userCursorDir)) { New-Item -Path $userCursorDir -ItemType Directory -Force | Out-Null }
-if (-not (Test-Path $cursorStore)) { New-Item -Path $cursorStore -ItemType Directory -Force | Out-Null }
-
-$cursorZip = @(
-    (Join-Path $PSScriptRoot 'Cursors.zip')
-    (Join-Path $PSScriptRoot 'Assets\Cursors.zip')
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-if (-not $cursorZip) {
-    $cursorZip = Join-Path $PSScriptRoot 'Cursors.zip'
-    try {
-        Invoke-RestMethod -Uri $cursorReleaseUrl -OutFile $cursorZip
-    } catch {
-        Write-Warning "Mouse pointer color: could not download Cursors.zip ($cursorReleaseUrl)."
-        $cursorZip = $null
-    }
-}
-
-if ($cursorZip -and (Test-Path $cursorZip)) {
-    Expand-Archive -Path $cursorZip -DestinationPath $cursorStore -Force
-    Get-ChildItem -Path $cursorStore -Filter '*.cur' -ErrorAction SilentlyContinue |
-        Copy-Item -Destination $userCursorDir -Force
-
-    $repoZip = Join-Path $PSScriptRoot 'Assets\Cursors.zip'
-    if ($cursorZip -ne $repoZip) {
-        Remove-Item $cursorZip -Force -ErrorAction SilentlyContinue
-    }
-} else {
-    Write-Warning 'Mouse pointer color: Cursors.zip not found. Run Assets\Export-CursorAssets.ps1 after selecting turquoise in Settings.'
-}
-
-if (-not (Test-Path $winSetupDir)) { New-Item -Path $winSetupDir -ItemType Directory -Force | Out-Null }
-$applyCursorSrc = Join-Path $PSScriptRoot 'Apply-Cursor.ps1'
-$applyCursorDst = Join-Path $winSetupDir 'Apply-Cursor.ps1'
-if (Test-Path $applyCursorSrc) {
-    Copy-Item -Path $applyCursorSrc -Destination $applyCursorDst -Force
-} else {
-    $applyReleaseUrl = 'https://github.com/Leviatan1121/WinSetup/releases/latest/download/Apply-Cursor.ps1'
-    try {
-        Invoke-RestMethod -Uri $applyReleaseUrl -OutFile $applyCursorDst
-    } catch {
-        Write-Warning "Mouse pointer color: could not download Apply-Cursor.ps1 ($applyReleaseUrl)."
-    }
-}
-
-if (Test-Path $applyCursorDst) {
-    & $applyCursorDst
-
-    $taskName = 'WinSetup-ApplyCursor'
-    $taskArgument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyCursorDst`""
-    try {
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgument
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop | Out-Null
-    } catch {
-        $startupPath = [Environment]::GetFolderPath('Startup')
-        $launcherVbs = Join-Path $startupPath 'WinSetup-ApplyCursor.vbs'
-        $vbsContent = "CreateObject(""Wscript.Shell"").Run ""powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File """"""$applyCursorDst"""""""", 0, False"
-        Set-Content -Path $launcherVbs -Value $vbsContent -Encoding ASCII
-        Write-Warning "Could not register logon task ($($_.Exception.Message)); using Startup shortcut instead."
-    }
-}
-#endregion
-
-#region Power
-# Turn off display after 3 minutes (AC and battery); no sleep on AC or battery
+#region System > Power > Screen and sleep
+# Display off after 3 minutes; sleep disabled on AC and battery.
 powercfg /change monitor-timeout-ac 3 | Out-Null
 powercfg /change monitor-timeout-dc 3 | Out-Null
 powercfg /change standby-timeout-ac 0 | Out-Null

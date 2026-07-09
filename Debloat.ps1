@@ -232,19 +232,6 @@ function Uninstall-Win32AppByName {
         }
     }
 }
-
-function Confirm-OptionalUninstall {
-    param(
-        [string]$AppName,
-        [string]$Note
-    )
-
-    Write-Host ""
-    Write-Host "Uninstall '$AppName'? [Enter = Yes, any key = No]" -ForegroundColor Yellow
-    if ($Note) { Write-Host $Note -ForegroundColor DarkGray }
-    $response = Read-Host
-    return [string]::IsNullOrWhiteSpace($response)
-}
 #endregion
 
 #region Built-in apps > Package list
@@ -280,34 +267,6 @@ winget uninstall --name "WhatsApp" --silent --accept-source-agreements --disable
 winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
-#endregion
-
-#region Remote support tools (optional)
-# Interactive: Enter = uninstall, any other key = skip.
-$mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
-if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'A restart is required to finish removal. Choose Restart later in the dialog to avoid rebooting now.')) {
-    Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
-}
-
-$quickAssistInstalled = @(
-    Get-AppxPackage -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
-    Get-AppxPackage -AllUsers -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
-) | Where-Object { $_ } | Select-Object -First 1
-
-if (-not $quickAssistInstalled) {
-    $quickAssistInstalled = Get-WindowsCapability -Online -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'App.Support.QuickAssist*' -and $_.State -eq 'Installed' } |
-        Select-Object -First 1
-}
-
-if ($quickAssistInstalled -and (Confirm-OptionalUninstall -AppName 'Quick Assist')) {
-    Remove-BuiltInApps @('MicrosoftCorporationII.QuickAssist')
-    Remove-AppsByPattern @('*QuickAssist*')
-
-    Get-WindowsCapability -Online -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'App.Support.QuickAssist*' -and $_.State -eq 'Installed' } |
-        ForEach-Object { Remove-WindowsCapability -Online -Name $_.Name -ErrorAction SilentlyContinue | Out-Null }
-}
 #endregion
 
 #region Taskbar > Unpin all apps (all profiles)

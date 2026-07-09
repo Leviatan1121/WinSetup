@@ -4,16 +4,8 @@
 # Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
 
 #region Accessibility > Mouse pointer and motion
-# Same registry keys as Settings > Accessibility > Mouse pointer and touch.
-# PointerType: 1 = white, 2 = black, 3 = inverted, 6 = custom (CursorColor).
-# PointerSize: 1–4 (slider); 3 → 64px base, 4 → 80px.
-$PointerSize = 3
-$PointerColor = 16760576 # COLORREF 0x00FFBF00 (turquoise)
-$PointerType = 6
-
-# Themes must not overwrite the pointer scheme (set before dark.theme).
-Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes' `
-    -Name 'ThemeChangesMousePointers' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+# Pointer size/color: Set-MousePointer.ps1 (same keys as Settings > Accessibility).
+$setPointerPath = Join-Path $PSScriptRoot 'Set-MousePointer.ps1'
 
 # Disable "Enhance pointer precision" (mouse acceleration).
 $mousePath = 'HKCU:\Control Panel\Mouse'
@@ -23,105 +15,19 @@ Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
 
 Add-Type @'
 using System.Runtime.InteropServices;
-public static class WinSetupInput {
+public static class WinSetupMouse {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, int[] pvParam, uint fWinIni);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, uint pvParam, uint fWinIni);
-    public const uint SPI_SETMOUSE = 0x0004;
-    public const uint SPI_SETCURSORS = 0x0057;
-    public const uint SPI_SETCURSORSIZE = 0x2029;
-    public const uint SPIF_UPDATEINIFILE = 0x01;
-    public const uint SPIF_SENDCHANGE = 0x02;
 }
 '@ -ErrorAction SilentlyContinue
+[void][WinSetupMouse]::SystemParametersInfo(0x0004, 0, [int[]]@(0, 0, 0), 0x03)
 
-[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETMOUSE, 0, [int[]]@(0, 0, 0), 0x03)
-
-$accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
-$cursorsPath = 'HKCU:\Control Panel\Cursors'
-$userCursorDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors'
-$cursorBaseSize = if ($PointerSize -ge 4) { 80 } else { 64 }
-
-if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }
-Set-ItemProperty -Path $accessibilityPath -Name 'CursorSize' -Value $PointerSize -Type DWord
-Set-ItemProperty -Path $accessibilityPath -Name 'CursorType' -Value $PointerType -Type DWord
-if ($PointerType -eq 6) {
-    Set-ItemProperty -Path $accessibilityPath -Name 'CursorColor' -Value $PointerColor -Type DWord
-}
-
-if (-not (Test-Path $cursorsPath)) { New-Item -Path $cursorsPath -Force | Out-Null }
-Set-ItemProperty -Path $cursorsPath -Name 'CursorBaseSize' -Value $cursorBaseSize -Type DWord
-Set-ItemProperty -Path $cursorsPath -Name 'Scheme Source' -Value 2 -Type DWord
-
-if ($PointerType -eq 6) {
-    if (-not (Test-Path $userCursorDir)) { New-Item -Path $userCursorDir -ItemType Directory -Force | Out-Null }
-
-    $hasEoaCursors = @(Get-ChildItem -Path $userCursorDir -Filter '*_eoa.cur' -ErrorAction SilentlyContinue).Count -gt 0
-    if (-not $hasEoaCursors) {
-        $cursorZip = Join-Path $PSScriptRoot 'Cursors.zip'
-        if (Test-Path $cursorZip) {
-            Expand-Archive -Path $cursorZip -DestinationPath $userCursorDir -Force
-            $hasEoaCursors = $true
-        } else {
-            Write-Warning 'Custom pointer: Cursors.zip not found. Use Settings > Accessibility > Mouse pointer once, or add Cursors.zip to the release.'
-        }
-    }
-
-    if ($hasEoaCursors) {
-        Set-ItemProperty -Path $cursorsPath -Name '(Default)' -Value 'Windows custom' -Type String
-        $cursorDir = '%LocalAppData%\Microsoft\Windows\Cursors\'
-        foreach ($entry in @{
-            Arrow       = 'arrow_eoa.cur'
-            Help        = 'helpsel_eoa.cur'
-            AppStarting = 'busy_eoa.cur'
-            Wait        = 'wait_eoa.cur'
-            Crosshair   = 'cross_eoa.cur'
-            IBeam       = 'ibeam_eoa.cur'
-            NWPen       = 'pen_eoa.cur'
-            No          = 'unavail_eoa.cur'
-            SizeNS      = 'ns_eoa.cur'
-            SizeWE      = 'ew_eoa.cur'
-            SizeNWSE    = 'nwse_eoa.cur'
-            SizeNESW    = 'nesw_eoa.cur'
-            SizeAll     = 'move_eoa.cur'
-            UpArrow     = 'up_eoa.cur'
-            Hand        = 'link_eoa.cur'
-            Person      = 'person_eoa.cur'
-            Pin         = 'pin_eoa.cur'
-        }.GetEnumerator()) {
-            Set-ItemProperty -Path $cursorsPath -Name $entry.Key -Value ($cursorDir + $entry.Value) -Type ExpandString
-        }
-    }
+if (Test-Path $setPointerPath) {
+    . $setPointerPath
+    Set-WinSetupMousePointer
 } else {
-    $schemeName = switch ($PointerType) { 2 { 'Windows Black' } 3 { 'Windows Inverted' } default { 'Windows Default' } }
-    $suffix = switch ($PointerType) { 2 { 'r' } 3 { 'i' } default { 'l' } }
-    $sysDir = '%SystemRoot%\cursors\'
-    Set-ItemProperty -Path $cursorsPath -Name '(Default)' -Value $schemeName -Type String
-    foreach ($entry in @{
-        Arrow       = "arrow_$suffix.cur"
-        Help        = "help_$suffix.cur"
-        AppStarting = "wait_$suffix.cur"
-        Wait        = "wait_$suffix.cur"
-        Crosshair   = "cross_$suffix.cur"
-        IBeam       = "beam_$suffix.cur"
-        NWPen       = "pen_$suffix.cur"
-        No          = "no_$suffix.cur"
-        SizeNS      = "size1_$suffix.cur"
-        SizeWE      = "size2_$suffix.cur"
-        SizeNWSE    = "size3_$suffix.cur"
-        SizeNESW    = "size4_$suffix.cur"
-        SizeAll     = "move_$suffix.cur"
-        UpArrow     = "up_$suffix.cur"
-        Hand        = "hand_$suffix.cur"
-    }.GetEnumerator()) {
-        Set-ItemProperty -Path $cursorsPath -Name $entry.Key -Value ($sysDir + $entry.Value) -Type ExpandString
-    }
+    Write-Warning "Set-MousePointer.ps1 not found beside Configure.ps1."
 }
-
-$cursorFlags = [WinSetupInput]::SPIF_UPDATEINIFILE -bor [WinSetupInput]::SPIF_SENDCHANGE
-[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETCURSORSIZE, 0, [uint32]$cursorBaseSize, [WinSetupInput]::SPIF_UPDATEINIFILE)
-[void][WinSetupInput]::SystemParametersInfo([WinSetupInput]::SPI_SETCURSORS, 0, 0, $cursorFlags)
 
 # Remove legacy logon re-apply hooks from older WinSetup versions.
 $startupPath = [Environment]::GetFolderPath('Startup')
@@ -132,10 +38,15 @@ Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' 
 #endregion
 
 #region Personalization > Themes > Dark theme
-# Apply after pointer scheme — ThemeChangesMousePointers prevents overwrite.
+# Apply after pointer scheme — re-apply pointer immediately after theme loads.
 Start-Process -FilePath "C:\Windows\Resources\Themes\dark.theme" -Wait
 Start-Sleep -Seconds 3
 Get-Process -Name "SystemSettings" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+if (Test-Path $setPointerPath) {
+    Set-WinSetupMousePointer
+    Install-WinSetupMousePointerPersistence
+}
 #endregion
 
 #region System > Developer options > End Task

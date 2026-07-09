@@ -4,51 +4,48 @@
 # Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
 
 #region Accessibility > Mouse pointer and motion
-# Pointer size/color: Set-MousePointer.ps1 (same keys as Settings > Accessibility).
-$setPointerPath = Join-Path $PSScriptRoot 'Set-MousePointer.ps1'
+# Pointer size 3 only (Settings > Accessibility > Mouse pointer). Color: pick at next logon (RunOnce).
+$accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
+$cursorsPath = 'HKCU:\Control Panel\Cursors'
+if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }
+Set-ItemProperty -Path $accessibilityPath -Name 'CursorSize' -Value 3 -Type DWord
 
-# Disable "Enhance pointer precision" (mouse acceleration).
-$mousePath = 'HKCU:\Control Panel\Mouse'
-Set-ItemProperty -Path $mousePath -Name 'MouseSpeed' -Value '0'
-Set-ItemProperty -Path $mousePath -Name 'MouseThreshold1' -Value '0'
-Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
+if (-not (Test-Path $cursorsPath)) { New-Item -Path $cursorsPath -Force | Out-Null }
+Set-ItemProperty -Path $cursorsPath -Name 'CursorBaseSize' -Value 64 -Type DWord
 
 Add-Type @'
 using System.Runtime.InteropServices;
 public static class WinSetupMouse {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, int[] pvParam, uint fWinIni);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, uint pvParam, uint fWinIni);
+    public const uint SPI_SETMOUSE = 0x0004;
+    public const uint SPI_SETCURSORSIZE = 0x2029;
+    public const uint SPIF_UPDATEINIFILE = 0x01;
 }
 '@ -ErrorAction SilentlyContinue
-[void][WinSetupMouse]::SystemParametersInfo(0x0004, 0, [int[]]@(0, 0, 0), 0x03)
 
-if (Test-Path $setPointerPath) {
-    . $setPointerPath
-    Set-WinSetupMousePointer
+$mousePath = 'HKCU:\Control Panel\Mouse'
+Set-ItemProperty -Path $mousePath -Name 'MouseSpeed' -Value '0'
+Set-ItemProperty -Path $mousePath -Name 'MouseThreshold1' -Value '0'
+Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
+[void][WinSetupMouse]::SystemParametersInfo([WinSetupMouse]::SPI_SETMOUSE, 0, [int[]]@(0, 0, 0), 0x03)
+[void][WinSetupMouse]::SystemParametersInfo([WinSetupMouse]::SPI_SETCURSORSIZE, 0, [uint32]64, [WinSetupMouse]::SPIF_UPDATEINIFILE)
+
+$promptInstaller = Join-Path $PSScriptRoot 'Install-MousePointerPrompt.ps1'
+if (Test-Path $promptInstaller) {
+    . $promptInstaller
+    Install-WinSetupMousePointerSettingsPrompt -SourceDir $PSScriptRoot
 } else {
-    Write-Warning "Set-MousePointer.ps1 not found beside Configure.ps1."
+    Write-Warning 'Install-MousePointerPrompt.ps1 not found - skipping mouse settings prompt at logon.'
 }
-
-# Remove legacy logon re-apply hooks from older WinSetup versions.
-$startupPath = [Environment]::GetFolderPath('Startup')
-Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.bat') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $startupPath 'WinSetup-ApplyCursor.vbs') -Force -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName 'WinSetup-ApplyCursor' -Confirm:$false -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName 'WinSetup-MousePointer' -Confirm:$false -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WinSetup-ApplyCursor' -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'WinSetup-MousePointer' -ErrorAction SilentlyContinue
 #endregion
 
 #region Personalization > Themes > Dark theme
-# Apply after pointer scheme — re-apply pointer immediately after theme loads.
 Start-Process -FilePath "C:\Windows\Resources\Themes\dark.theme" -Wait
 Start-Sleep -Seconds 3
 Get-Process -Name "SystemSettings" -ErrorAction SilentlyContinue | Stop-Process -Force
-
-if (Test-Path $setPointerPath) {
-    Set-WinSetupMousePointer
-    Install-WinSetupMousePointerPersistence
-}
 #endregion
 
 #region System > Developer options > End Task

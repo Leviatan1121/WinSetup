@@ -32,4 +32,3 @@ jobs:
           files: |
             *.ps1
             Setup.bat
-            Assets/Cursors.zip

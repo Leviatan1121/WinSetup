@@ -39,16 +39,6 @@ if (Test-Path $performancePath) {
 }
 #endregion
 
-#region Pointer refresh after Explorer restart in Debloat
-$setPointerPath = Join-Path $ScriptDir 'Set-MousePointer.ps1'
-$cursorZip = Join-Path $ScriptDir 'Cursors.zip'
-if (Test-Path $setPointerPath) {
-    Write-Host '[*] Refreshing mouse pointer...' -ForegroundColor DarkGray
-    . $setPointerPath
-    Set-WinSetupMousePointer -CursorsZip $cursorZip
-}
-#endregion
-
 Write-Host '=========================================================' -ForegroundColor Cyan
 Write-Host '[!] Elevated pass finished.' -ForegroundColor Cyan
 Write-Host '=========================================================' -ForegroundColor Cyan

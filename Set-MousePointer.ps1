@@ -189,20 +189,27 @@ function Install-WinSetupMousePointerPersistence {
 
     if (-not (Test-Path $logonScript)) { return }
 
-    try {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $runName = 'WinSetup-MousePointer'
+    $taskCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$logonScript`""
 
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-            -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$logonScript`""
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
 
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-            -Settings $settings -Principal $principal -Force | Out-Null
-    } catch {
-        Write-Warning "Logon pointer task not registered: $($_.Exception.Message)"
+    # schtasks ONLOGON works without admin; avoid Register-ScheduledTask (often access denied).
+    $registered = $false
+    $null = schtasks.exe /Create /TN $taskName /TR $taskCmd /SC ONLOGON /RL LIMITED /F 2>&1
+    if ($LASTEXITCODE -eq 0) { $registered = $true }
+
+    if ($registered) {
+        Remove-ItemProperty -Path $runKey -Name $runName -ErrorAction SilentlyContinue
+        Write-Host '[*] Pointer logon hook: Task Scheduler (ONLOGON).' -ForegroundColor DarkGray
+        return
     }
+
+    # Fallback: HKCU Run (no elevation). Apply-MousePointerAtLogon.ps1 removes it after 3 logons.
+    Set-ItemProperty -Path $runKey -Name $runName -Value $taskCmd -Type String
+    Write-Host '[*] Pointer logon hook: Run key (Task Scheduler unavailable).' -ForegroundColor DarkGray
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

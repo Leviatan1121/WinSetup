@@ -34,5 +34,8 @@ if ($cursorType -eq 6) {
 
     if ($count -ge 3) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
+        Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+            -Name $taskName -ErrorAction SilentlyContinue
     }
 }

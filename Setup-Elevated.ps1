@@ -1,5 +1,6 @@
-# WinSetup — single elevated pass (one UAC). Called from Setup.bat only.
-# Order: Debloat → Performance (HKLM) → pointer refresh → RemoteSupport (Quick Assist, then RDP).
+# WinSetup — elevated pass (UAC 1). Called from Setup.bat.
+# Order: Debloat → Performance (HKLM) → pointer refresh.
+# RemoteSupport runs last in Setup.bat (separate UAC) after pointer persistence.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -45,14 +46,6 @@ if (Test-Path $setPointerPath) {
     Write-Host '[*] Refreshing mouse pointer...' -ForegroundColor DarkGray
     . $setPointerPath
     Set-WinSetupMousePointer -CursorsZip $cursorZip
-}
-#endregion
-
-#region Remote support (last — RDP may prompt for restart)
-$remoteSupportPath = Join-Path $ScriptDir 'RemoteSupport.ps1'
-if (Test-Path $remoteSupportPath) {
-    Write-Host '[*] Running RemoteSupport.ps1...' -ForegroundColor DarkGray
-    & $remoteSupportPath -WinSetupElevated
 }
 #endregion
 

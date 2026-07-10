@@ -27,7 +27,7 @@ if ($SystemOnly) {
 #
 # sysdm.cpl: custom preset — best performance + Explorer thumbnails + ClearType.
 # Accessibility: Animation effects OFF, Transparency effects OFF.
-# Gaming: Game DVR/Bar OFF, Game Mode OFF (OBS + Discord + VTube Studio workflow).
+# Gaming: background DVR + Game Mode OFF (OBS workflow); Win+G Game Bar overlay kept.
 # After running: sign out and back in (or reboot) before verifying in sysdm.cpl.
 
 #region Paths
@@ -88,8 +88,9 @@ Set-ItemProperty -Path $desktopPath -Name 'UserPreferencesMask' -Type Binary -Va
 Set-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -Type DWord
 #endregion
 
-#region Gaming > Game DVR, Game Bar, and Game Mode (HKCU)
-# OFF for OBS live/record + Discord + VTube Studio — Game Mode starves non-game capture apps.
+#region Gaming > Game DVR, Game Mode (HKCU); Game Bar overlay (Win+G) kept
+# Background capture + Game Mode OFF for OBS + Discord + VTube Studio.
+# Do not disable UseNexusForGameBarEnabled — Win+G overlay stays available.
 $gameConfigStore = 'HKCU:\System\GameConfigStore'
 if (-not (Test-Path $gameConfigStore)) { New-Item -Path $gameConfigStore -Force | Out-Null }
 Set-ItemProperty -Path $gameConfigStore -Name 'GameDVR_Enabled' -Value 0 -Type DWord
@@ -104,7 +105,7 @@ if (-not (Test-Path $gameBarPath)) { New-Item -Path $gameBarPath -Force | Out-Nu
 Set-ItemProperty -Path $gameBarPath -Name 'AllowAutoGameMode' -Value 0 -Type DWord
 Set-ItemProperty -Path $gameBarPath -Name 'AutoGameModeEnabled' -Value 0 -Type DWord
 Set-ItemProperty -Path $gameBarPath -Name 'ShowStartupPanel' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $gameBarPath -Name 'UseNexusForGameBarEnabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $gameBarPath -Name 'UseNexusForGameBarEnabled' -Value 1 -Type DWord -ErrorAction SilentlyContinue
 #endregion
 
 #region Apply changes

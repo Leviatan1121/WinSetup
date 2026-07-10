@@ -111,6 +111,15 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
 
 winget uninstall --id 9MSSGKG348SP --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall "Windows Web Experience Pack" --silent --accept-source-agreements --disable-interactivity 2>$null
+
+Get-AppxPackage -Name "Microsoft.WidgetsPlatformRuntime" -ErrorAction SilentlyContinue |
+    Remove-AppxPackage -ErrorAction SilentlyContinue
+Get-AppxPackage -AllUsers -Name "Microsoft.WidgetsPlatformRuntime" -ErrorAction SilentlyContinue |
+    Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+    Where-Object DisplayName -Like '*WidgetsPlatformRuntime*' |
+    ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
+winget uninstall --name "Widgets Platform Runtime" --silent --accept-source-agreements --disable-interactivity 2>$null
 #endregion
 
 #region Copilot and Recall
@@ -240,6 +249,16 @@ function Uninstall-Win32AppByName {
 }
 #endregion
 
+#region Built-in apps > Xbox ecosystem (intentionally kept)
+# Win+G (Game Bar), Xbox Live sign-in (Steam + Xbox titles), optional Game Pass.
+# These MSIX packages are visible in winget list but often not in Control Panel — keep all:
+#   Microsoft.XboxGamingOverlay      Game Bar (Win+G overlay)
+#   Microsoft.GamingApp              Xbox app / Game Pass library
+#   Microsoft.XboxIdentityProvider     Xbox Live authentication
+#   Microsoft.Xbox.TCUI                In-game purchase / subscription UI
+#   Microsoft.GamingServices           Xbox Live runtime (service package, if present)
+#endregion
+
 #region Built-in apps > Package list
 # Remove provisioned + installed Appx for each package name (current user and all users).
 Remove-BuiltInApps @(
@@ -259,10 +278,12 @@ Remove-BuiltInApps @(
     'Microsoft.Whiteboard'                   # Whiteboard
     'Microsoft.MicrosoftStickyNotes'       # Sticky Notes
     'Microsoft.BingNews'                     # News
+    'Microsoft.BingSearch'                   # Bing in Start/search (no Start tile; winget-only visibility)
+    'Microsoft.Windows.DevHome'              # Dev Home
+    'Microsoft.PowerAutomateDesktop'         # Power Automate Desktop
     'Microsoft.OutlookForWindows'            # Outlook
     'Microsoft.OneConnect'                   # Mobile Plans
     'Microsoft.MicrosoftSolitaireCollection' # Solitaire Collection
-  # 'Microsoft.GamingApp'                  # Casual Games (Xbox)
 )
 
 # WhatsApp (Store, Win32 installer, or winget)
@@ -273,6 +294,13 @@ winget uninstall --name "WhatsApp" --silent --accept-source-agreements --disable
 winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
 winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
+
+# MSIX-only packages (winget list / Get-AppxPackage; not in Control Panel).
+winget uninstall --id 9NZBF4GT040C --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --name "Microsoft Bing" --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --name "Dev Home" --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --id 9NFTCH6J7FHV --silent --accept-source-agreements --disable-interactivity 2>$null
+winget uninstall --name "Power Automate" --silent --accept-source-agreements --disable-interactivity 2>$null
 #endregion
 
 #region Taskbar > Unpin all apps (all profiles)

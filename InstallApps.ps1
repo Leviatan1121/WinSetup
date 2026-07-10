@@ -41,7 +41,6 @@ $CategoryCatalog = [ordered]@{
         Packages = @(
             @{ Id = 'Valve.Steam'; Name = 'Steam' }
             @{ Id = 'EpicGames.EpicGamesLauncher'; Name = 'Epic Games Launcher' }
-            @{ Id = 'GodotEngine.GodotEngine'; Name = 'Godot' }
         )
     }
     Streaming = @{
@@ -123,6 +122,7 @@ $CategoryCatalog = [ordered]@{
             @{ Name = 'Python (mise)'; MiseTool = 'python@latest' }
             @{ Name = 'Go (mise)'; MiseTool = 'go@latest' }
             @{ Id = 'Rustlang.Rustup'; Name = 'Rust' }
+            @{ Id = 'GodotEngine.GodotEngine'; Name = 'Godot' }
             @{
                 Name          = 'C++ Build Tools'
                 Id            = 'Microsoft.VisualStudio.BuildTools'

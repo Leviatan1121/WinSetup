@@ -41,6 +41,7 @@ $CategoryCatalog = [ordered]@{
         Packages = @(
             @{ Id = 'Valve.Steam'; Name = 'Steam' }
             @{ Id = 'EpicGames.EpicGamesLauncher'; Name = 'Epic Games Launcher' }
+            @{ Id = 'GodotEngine.GodotEngine'; Name = 'Godot' }
         )
     }
     Streaming = @{

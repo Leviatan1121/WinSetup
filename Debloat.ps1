@@ -228,6 +228,33 @@ function Remove-AppsByPattern {
     }
 }
 
+function Remove-PythonAppExecutionAliases {
+    param(
+        [string]$ProfileRoot
+    )
+
+    $windowsApps = Join-Path $ProfileRoot 'AppData\Local\Microsoft\WindowsApps'
+    if (-not (Test-Path -LiteralPath $windowsApps)) {
+        return
+    }
+
+    foreach ($aliasName in @('python.exe', 'python3.exe')) {
+        $aliasPath = Join-Path $windowsApps $aliasName
+        if (-not (Test-Path -LiteralPath $aliasPath)) {
+            continue
+        }
+
+        $item = Get-Item -LiteralPath $aliasPath -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            & fsutil.exe reparsePoint delete $aliasPath 2>$null | Out-Null
+        }
+
+        if (Test-Path -LiteralPath $aliasPath) {
+            Remove-Item -LiteralPath $aliasPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Uninstall-Win32AppByName {
     param([string]$DisplayNamePattern)
     # Walk Uninstall registry keys and run each matching Quiet uninstall string.
@@ -377,6 +404,20 @@ Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightFeature
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightOnActionCenter' -Value 1 -Type DWord
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsSpotlightOnSettings' -Value 1 -Type DWord
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableThirdPartySuggestions' -Value 1 -Type DWord
+#endregion
+
+#region Apps > Disable Microsoft Store Python execution aliases
+# Removes python.exe / python3.exe reparse points that hijack `python` to the Store.
+# Needed so real Python installs (e.g. mise) win on PATH.
+$pythonAliasProfiles = @('C:\Users\Default') + (
+    Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
+    ForEach-Object { $_.FullName }
+)
+
+foreach ($profileRoot in $pythonAliasProfiles) {
+    Remove-PythonAppExecutionAliases -ProfileRoot $profileRoot
+}
 #endregion
 
 #region Privacy > Diagnostic data and telemetry (HKLM)

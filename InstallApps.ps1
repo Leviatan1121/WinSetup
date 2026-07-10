@@ -117,11 +117,10 @@ $CategoryCatalog = [ordered]@{
                     '/MERGETASKS=!runcode'
                 )
             }
-            @{
-                Id          = 'Volta.Volta'
-                Name        = 'Node.js (Volta)'
-                PostInstall = @('volta install node')
-            }
+            @{ Id = 'jdx.mise'; Name = 'mise' }
+            @{ Name = 'Node.js (mise)'; MiseTool = 'node@lts' }
+            @{ Name = 'Python (mise)'; MiseTool = 'python@latest' }
+            @{ Name = 'Go (mise)'; MiseTool = 'go@latest' }
             @{ Id = 'Rustlang.Rustup'; Name = 'Rust' }
             @{
                 Name          = 'C++ Build Tools'
@@ -166,6 +165,10 @@ function Get-PackageSubtitle {
 
     if ($Package.InstallerUrl) {
         return 'Direct download'
+    }
+
+    if ($Package.MiseTool) {
+        return "mise $($Package.MiseTool)"
     }
 
     return [string]$Package.Id
@@ -869,35 +872,175 @@ function Update-SessionUserPath {
     }
 }
 
-function Get-VoltaExecutable {
+function Get-MiseExecutable {
+    Update-SessionUserPath
+
     $paths = @(
-        (Join-Path $env:LOCALAPPDATA 'Volta\bin\volta.exe')
-        (Join-Path $env:USERPROFILE '.volta\bin\volta.exe')
+        (Join-Path $env:USERPROFILE '.local\bin\mise.exe')
     )
+
+    $wingetPackages = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path -LiteralPath $wingetPackages) {
+        $paths += Get-ChildItem -Path $wingetPackages -Directory -Filter 'jdx.mise*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'mise\bin\mise.exe' }
+    }
+
     foreach ($path in $paths) {
         if (Test-Path -LiteralPath $path) {
             return $path
         }
     }
-    return $null
-}
 
-function Wait-VoltaExecutable {
-    param(
-        [int]$TimeoutSeconds = 90
-    )
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        Update-SessionUserPath
-        $voltaExe = Get-VoltaExecutable
-        if ($voltaExe) {
-            return $voltaExe
-        }
-        Start-Sleep -Seconds 2
+    $command = Get-Command mise -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+        return $command.Source
     }
 
     return $null
+}
+
+function Add-UserPathEntry {
+    param(
+        [string]$PathToAdd
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathToAdd)) {
+        return $false
+    }
+
+    $normalized = $PathToAdd.TrimEnd('\')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $segments = @()
+    if ($userPath) {
+        $segments = @($userPath -split ';' | Where-Object { $_ -and $_.Trim() })
+    }
+
+    foreach ($segment in $segments) {
+        if ($segment.TrimEnd('\') -ieq $normalized) {
+            return $false
+        }
+    }
+
+    $segments += $normalized
+    [Environment]::SetEnvironmentVariable('Path', ($segments -join ';'), 'User')
+    return $true
+}
+
+function Remove-WinSetupMiseProfileActivation {
+    $marker = '# WinSetup: mise activate'
+    $profilePaths = @(
+        (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1')
+        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    )
+
+    foreach ($profilePath in $profilePaths) {
+        if (-not (Test-Path -LiteralPath $profilePath)) {
+            continue
+        }
+
+        $lines = Get-Content -LiteralPath $profilePath
+        $filtered = [System.Collections.ArrayList]@()
+        $skipNext = $false
+
+        foreach ($line in $lines) {
+            if ($line -match [regex]::Escape($marker)) {
+                $skipNext = $true
+                continue
+            }
+
+            if ($skipNext -and $line -match 'mise activate') {
+                $skipNext = $false
+                continue
+            }
+
+            $skipNext = $false
+            [void]$filtered.Add($line)
+        }
+
+        if ($filtered.Count -ne $lines.Count) {
+            if ($filtered.Count -gt 0) {
+                Set-Content -LiteralPath $profilePath -Value $filtered -Encoding utf8
+            } else {
+                Remove-Item -LiteralPath $profilePath -Force
+            }
+            Write-Host "[+] Removed legacy WinSetup mise activation from $profilePath" -ForegroundColor Green
+        }
+    }
+}
+
+function Initialize-MiseEnvironment {
+    $miseExe = Get-MiseExecutable
+    if (-not $miseExe) {
+        return $false
+    }
+
+    Remove-WinSetupMiseProfileActivation
+
+    $added = $false
+    $miseBin = Split-Path -Parent $miseExe
+    if (Add-UserPathEntry -PathToAdd $miseBin) {
+        $added = $true
+    }
+
+    $shimsDir = Join-Path $env:LOCALAPPDATA 'mise\shims'
+    if (Add-UserPathEntry -PathToAdd $shimsDir) {
+        $added = $true
+    }
+
+    $localMiseBin = Join-Path $env:USERPROFILE '.local\bin'
+    if (Test-Path -LiteralPath (Join-Path $localMiseBin 'mise.exe')) {
+        if (Add-UserPathEntry -PathToAdd $localMiseBin) {
+            $added = $true
+        }
+    }
+
+    if ($added) {
+        Update-SessionUserPath
+        Write-Host '[+] Added mise binary and shims to user PATH.' -ForegroundColor Green
+    }
+
+    & $miseExe reshim | Out-Null
+    return $true
+}
+
+function Ensure-MiseInstalled {
+    $miseExe = Get-MiseExecutable
+    if ($miseExe) {
+        return $miseExe
+    }
+
+    Write-Host '[*] Installing mise (required for language runtimes)...' -ForegroundColor Cyan
+    if (-not (Install-WingetPackage -Id 'jdx.mise' -Name 'mise')) {
+        return $null
+    }
+
+    return Get-MiseExecutable
+}
+
+function Install-MiseTool {
+    param(
+        [string]$Name,
+        [string]$Tool
+    )
+
+    $miseExe = Ensure-MiseInstalled
+    if (-not $miseExe) {
+        Write-Host "[!] mise is not available. Could not install $Name." -ForegroundColor Red
+        return $false
+    }
+
+    Initialize-MiseEnvironment | Out-Null
+
+    Write-Host "[*] Installing $Name with mise ($Tool)..." -ForegroundColor Cyan
+    & $miseExe use --global $Tool
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[!] mise use --global $Tool failed. Exit code:" $LASTEXITCODE -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host "[+] $Name installed via mise." -ForegroundColor Green
+    Initialize-MiseEnvironment | Out-Null
+    return $true
 }
 
 function Wait-InstallAppsDismiss {
@@ -917,34 +1060,11 @@ function Invoke-PackagePostInstall {
 
     $failures = 0
     foreach ($step in $Package.PostInstall) {
-        switch ($step) {
-            'volta install node' {
-                Write-Host '[*] Waiting for Volta to become available...' -ForegroundColor Cyan
-                $voltaExe = Wait-VoltaExecutable
-                if (-not $voltaExe) {
-                    Write-Host '[!] Volta was not found after install. Open a new terminal and run: volta install node' -ForegroundColor Red
-                    $failures++
-                    continue
-                }
-
-                Write-Host '[*] Installing Node.js with Volta...' -ForegroundColor Cyan
-                & $voltaExe install node
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Host '[!] volta install node failed. Exit code:' $LASTEXITCODE -ForegroundColor Red
-                    $failures++
-                    continue
-                }
-
-                Write-Host '[+] Node.js installed via Volta.' -ForegroundColor Green
-            }
-            default {
-                Write-Host "[*] Running post-install: $step" -ForegroundColor Cyan
-                Invoke-Expression $step
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Host "[!] Post-install failed: $step. Exit code:" $LASTEXITCODE -ForegroundColor Red
-                    $failures++
-                }
-            }
+        Write-Host "[*] Running post-install: $step" -ForegroundColor Cyan
+        Invoke-Expression $step
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[!] Post-install failed: $step. Exit code:" $LASTEXITCODE -ForegroundColor Red
+            $failures++
         }
     }
 
@@ -956,6 +1076,10 @@ function Install-SelectedPackage {
         $Package
     )
 
+    if ($Package.MiseTool) {
+        return Install-MiseTool -Name $Package.Name -Tool $Package.MiseTool
+    }
+
     $installed = if ($Package.InstallerUrl) {
         Install-DownloadedPackage -Package $Package
     } else {
@@ -964,6 +1088,10 @@ function Install-SelectedPackage {
 
     if (-not $installed) {
         return $false
+    }
+
+    if ($Package.Id -eq 'jdx.mise') {
+        Initialize-MiseEnvironment | Out-Null
     }
 
     if ($Package.PostInstall) {
@@ -1033,8 +1161,12 @@ Write-Host 'Selected:' (($selectedPackages | ForEach-Object { $_.Name }) -join '
 Write-Host ''
 
 $failures = 0
+$installed = 0
+$total = $selectedPackages.Count
 foreach ($package in ($selectedPackages | Sort-Object Name)) {
-    if (-not (Install-SelectedPackage -Package $package)) {
+    if (Install-SelectedPackage -Package $package) {
+        $installed++
+    } else {
         $failures++
     }
 }
@@ -1042,9 +1174,9 @@ foreach ($package in ($selectedPackages | Sort-Object Name)) {
 Write-Host ''
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($failures -eq 0) {
-    Write-Host '[!] Install pass finished.' -ForegroundColor Green
+    Write-Host "[+] Installed $installed of $total app(s)." -ForegroundColor Green
 } else {
-    Write-Host "[!] Install pass finished with $failures failure(s)." -ForegroundColor Yellow
+    Write-Host "[~] Installed $installed of $total app(s). $failures failed." -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
 Wait-InstallAppsDismiss

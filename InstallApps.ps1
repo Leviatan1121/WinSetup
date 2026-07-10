@@ -856,6 +856,19 @@ function Install-DownloadedPackage {
     return $true
 }
 
+function Update-SessionUserPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+
+    if ($machinePath -and $userPath) {
+        $env:Path = "$machinePath;$userPath"
+    } elseif ($machinePath) {
+        $env:Path = $machinePath
+    } elseif ($userPath) {
+        $env:Path = $userPath
+    }
+}
+
 function Get-VoltaExecutable {
     $paths = @(
         (Join-Path $env:LOCALAPPDATA 'Volta\bin\volta.exe')
@@ -867,6 +880,30 @@ function Get-VoltaExecutable {
         }
     }
     return $null
+}
+
+function Wait-VoltaExecutable {
+    param(
+        [int]$TimeoutSeconds = 90
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Update-SessionUserPath
+        $voltaExe = Get-VoltaExecutable
+        if ($voltaExe) {
+            return $voltaExe
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    return $null
+}
+
+function Wait-InstallAppsDismiss {
+    Write-Host ''
+    Write-Host ("Finished at {0}." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
+    Read-Host 'Press Enter to close this window'
 }
 
 function Invoke-PackagePostInstall {
@@ -882,7 +919,8 @@ function Invoke-PackagePostInstall {
     foreach ($step in $Package.PostInstall) {
         switch ($step) {
             'volta install node' {
-                $voltaExe = Get-VoltaExecutable
+                Write-Host '[*] Waiting for Volta to become available...' -ForegroundColor Cyan
+                $voltaExe = Wait-VoltaExecutable
                 if (-not $voltaExe) {
                     Write-Host '[!] Volta was not found after install. Open a new terminal and run: volta install node' -ForegroundColor Red
                     $failures++
@@ -978,6 +1016,7 @@ Write-Host '[!] WinSetup software install' -ForegroundColor Cyan
 Write-Host '=========================================================' -ForegroundColor Cyan
 
 if (-not (Test-WingetAvailable)) {
+    Wait-InstallAppsDismiss
     exit 1
 }
 
@@ -985,6 +1024,7 @@ $selectedPackages = Show-InstallSelectionWindow -Catalog $CategoryCatalog
 
 if ($selectedPackages.Count -eq 0) {
     Write-Host '[~] No apps selected. Nothing to install.' -ForegroundColor DarkYellow
+    Wait-InstallAppsDismiss
     exit 0
 }
 
@@ -1007,4 +1047,5 @@ if ($failures -eq 0) {
     Write-Host "[!] Install pass finished with $failures failure(s)." -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
+Wait-InstallAppsDismiss
 #endregion

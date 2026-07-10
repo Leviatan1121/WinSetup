@@ -4,7 +4,7 @@
 # Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
 
 #region Accessibility > Mouse pointer and motion
-# Pointer size 3 only (Settings > Accessibility > Mouse pointer). Color: pick at next logon (RunOnce).
+# Pointer size 3 only. Color: Setup.bat registers post-reboot Settings prompt at the very end.
 $accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
 $cursorsPath = 'HKCU:\Control Panel\Cursors'
 if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }
@@ -36,9 +36,7 @@ Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
 $promptInstaller = Join-Path $PSScriptRoot 'Install-MousePointerPrompt.ps1'
 if (Test-Path $promptInstaller) {
     . $promptInstaller
-    Install-WinSetupMousePointerSettingsPrompt -SourceDir $PSScriptRoot
-} else {
-    Write-Warning 'Install-MousePointerPrompt.ps1 not found - skipping mouse settings prompt at logon.'
+    Remove-WinSetupCursorLegacy
 }
 #endregion
 

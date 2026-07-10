@@ -1,17 +1,33 @@
-# WinSetup — one-shot at next logon: open Mouse pointer settings, then remove itself.
-# Registered via RunOnce from Configure.ps1 / Setup.bat.
+# WinSetup — after reboot: open Mouse pointer settings, then remove hook + self.
+# Run key persists until LastBootUpTime is newer than the setup marker (real reboot).
 
-$runOnceKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
-$runOnceName = 'WinSetup-MousePointerSettings'
-$taskName = 'WinSetup-MousePointer'
+$winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
+$markerPath = Join-Path $winSetupDir '.open-mouse-after-reboot'
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$runName = 'WinSetup-MousePointerSettings'
+
+if (-not (Test-Path $markerPath)) {
+    Remove-ItemProperty -Path $runKey -Name $runName -ErrorAction SilentlyContinue
+    exit 0
+}
+
+$setupAt = (Get-Item -LiteralPath $markerPath).LastWriteTimeUtc
+$bootAt = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+
+# Same boot session as setup (Explorer restart does not count) — wait for reboot.
+if ($bootAt -le $setupAt) {
+    exit 0
+}
 
 Start-Process 'ms-settings:easeofaccess-mousepointer'
 
-Remove-ItemProperty -Path $runOnceKey -Name $runOnceName -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
-    -Name 'WinSetup-MousePointer' -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
+Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $runKey -Name $runName -ErrorAction SilentlyContinue
+
+foreach ($task in @('WinSetup-MousePointer', 'WinSetup-MousePointerSettings')) {
+    Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
+    schtasks.exe /Delete /TN $task /F 2>$null | Out-Null
+}
 
 if ($PSCommandPath) {
     Start-Sleep -Milliseconds 500

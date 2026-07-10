@@ -1,5 +1,5 @@
-# WinSetup — persist Open-MousePointerSettings.ps1 for next logon (RunOnce).
-# Dot-source from Configure.ps1 or Setup.bat.
+# WinSetup — register Open-MousePointerSettings.ps1 for after next reboot (Run key + marker).
+# Call once at end of Setup.bat only — not during Configure.
 
 function Remove-WinSetupCursorLegacy {
     $startupPath = [Environment]::GetFolderPath('Startup')
@@ -10,7 +10,7 @@ function Remove-WinSetupCursorLegacy {
         Remove-Item (Join-Path $startupPath $name) -Force -ErrorAction SilentlyContinue
     }
 
-    foreach ($task in @('WinSetup-ApplyCursor', 'WinSetup-MousePointer')) {
+    foreach ($task in @('WinSetup-ApplyCursor', 'WinSetup-MousePointer', 'WinSetup-MousePointerSettings')) {
         Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
         schtasks.exe /Delete /TN $task /F 2>$null | Out-Null
     }
@@ -53,13 +53,16 @@ function Install-WinSetupMousePointerSettingsPrompt {
     $source = Join-Path $SourceDir 'Open-MousePointerSettings.ps1'
     $dest = Join-Path $winSetupDir 'Open-MousePointerSettings.ps1'
     if (-not (Test-Path $source)) {
-        Write-Warning 'Open-MousePointerSettings.ps1 not found - skipping logon prompt.'
+        Write-Warning 'Open-MousePointerSettings.ps1 not found - skipping post-reboot settings prompt.'
         return
     }
 
     Copy-Item -Path $source -Destination $dest -Force
 
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$dest`""
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
+    $markerPath = Join-Path $winSetupDir '.open-mouse-after-reboot'
+    Set-Content -Path $markerPath -Value (Get-Date).ToUniversalTime().ToString('o') -Force
+
+    $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dest`""
+    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name 'WinSetup-MousePointerSettings' -Value $cmd -Type String
 }

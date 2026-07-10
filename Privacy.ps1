@@ -1,6 +1,6 @@
 # WinSetup — privacy and recommendations (HKCU).
 # Settings: Privacy & security. Requires no elevation.
-# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
+# Run order: WinSetup.ps1 → Configure.ps1 → Privacy.ps1 → Performance.ps1 → Debloat.ps1
 
 #region Privacy > General > Recommendations and offers
 # Personalized offers, tailored experiences, and language-list sharing.

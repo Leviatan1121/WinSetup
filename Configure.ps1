@@ -1,10 +1,10 @@
 # WinSetup — user-level appearance, shell, and power settings (HKCU).
 # Maps to Settings pages where noted. Requires no elevation.
-# Run order: Setup.bat → Configure.ps1 → Privacy.ps1 → Debloat.ps1 → Performance.ps1
+# Run order: WinSetup.ps1 → Configure.ps1 → Privacy.ps1 → Performance.ps1 → Debloat.ps1
 # Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
 
 #region Accessibility > Mouse pointer and motion
-# Pointer size 3 only. Color: Setup.bat registers post-reboot Settings prompt at the very end.
+# Pointer size 3 only. Color: WinSetup.ps1 registers post-reboot Settings prompt at the very end.
 $accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
 $cursorsPath = 'HKCU:\Control Panel\Cursors'
 if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }

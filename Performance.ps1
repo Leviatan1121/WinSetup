@@ -1,6 +1,6 @@
 # WinSetup — visual performance preset (sysdm.cpl + Accessibility > Visual effects).
-# HKCU by default; -SystemOnly for HKLM tweaks (called from Setup-Elevated.ps1).
-# Run order: Setup.bat → Configure → Privacy → Performance → Setup-Elevated → pointer persist
+# HKCU by default; -SystemOnly for HKLM tweaks (called from WinSetup.ps1 elevated child).
+# Run order: WinSetup.ps1 → Configure → Privacy → Performance (user) → Performance -SystemOnly → pointer hooks
 
 param([switch]$SystemOnly)
 

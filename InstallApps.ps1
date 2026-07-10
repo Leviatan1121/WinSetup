@@ -175,6 +175,25 @@ function Get-PackageSubtitle {
     return [string]$Package.Id
 }
 
+function ConvertTo-InstallPackageArray {
+    param(
+        [AllowNull()]
+        $Selection
+    )
+
+    if ($null -eq $Selection) {
+        return @()
+    }
+
+    # PowerShell unwraps single-element arrays from functions; a lone package arrives as one hashtable.
+    # @($hashtable) enumerates keys (Count = 2+), not the package — detect and re-wrap.
+    if ($Selection -is [hashtable] -and $Selection.ContainsKey('Name')) {
+        return ,@($Selection)
+    }
+
+    return @($Selection)
+}
+
 function Test-WingetAvailable {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Host '[!] winget is not available on this system.' -ForegroundColor Red
@@ -182,6 +201,72 @@ function Test-WingetAvailable {
         return $false
     }
     return $true
+}
+
+function Update-WinSetupWingetEnvironment {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = "$machinePath;$userPath"
+    Get-Command winget -ErrorAction SilentlyContinue | Out-Null
+}
+
+function Test-WinSetupWingetAppInstallerUpgrade {
+    & winget upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Repair-WinSetupWingetAppInstallerElevated {
+    Write-Host '[!] Approve UAC to repair App Installer (winget)...' -ForegroundColor Yellow
+
+    $elevatedCommand = @'
+$ErrorActionPreference = 'Continue'
+& winget settings --enable BypassCertificatePinningForMicrosoftStore
+& winget upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
+$upgradeExit = $LASTEXITCODE
+& winget settings --disable BypassCertificatePinningForMicrosoftStore
+exit $upgradeExit
+'@
+
+    try {
+        $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
+            '-NoProfile'
+            '-ExecutionPolicy'
+            'Bypass'
+            '-Command'
+            $elevatedCommand
+        )
+        return ($process.ExitCode -eq 0)
+    } catch {
+        Write-Warning "Elevated winget repair failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Ensure-WingetAppInstaller {
+    Write-Host '[*] Checking App Installer (winget)...' -ForegroundColor DarkGray
+
+    if (Test-WinSetupWingetAppInstallerUpgrade) {
+        Update-WinSetupWingetEnvironment
+        Write-Host '[+] App Installer is ready.' -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host '[~] winget upgrade failed — App Installer may need repair.' -ForegroundColor Yellow
+
+    if (-not (Repair-WinSetupWingetAppInstallerElevated)) {
+        Write-Host '[!] Could not repair App Installer. Install it from the Microsoft Store and run again.' -ForegroundColor Red
+        return $false
+    }
+
+    Update-WinSetupWingetEnvironment
+
+    if (Test-WinSetupWingetAppInstallerUpgrade) {
+        Write-Host '[+] App Installer repaired.' -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host '[!] App Installer still failing after repair.' -ForegroundColor Red
+    return $false
 }
 
 function Show-InstallSelectionWindow {
@@ -796,10 +881,15 @@ function Show-InstallSelectionWindow {
     [System.GC]::WaitForPendingFinalizers()
 
     if ($script:InstallDialogResult -ne 'Install') {
-        return @()
+        return ,@()
     }
 
-    return @($script:SelectedPackages)
+    return ,@(
+        $script:InstallUi.AppTiles |
+            Where-Object { $_.IsSelected } |
+            Sort-Object { $_.Package.Name } |
+            ForEach-Object { $_.Package }
+    )
 }
 
 function Install-DownloadedPackage {
@@ -1105,7 +1195,12 @@ if (-not (Test-WingetAvailable)) {
     exit 1
 }
 
-$selectedPackages = Show-InstallSelectionWindow -Catalog $CategoryCatalog
+if (-not (Ensure-WingetAppInstaller)) {
+    Wait-InstallAppsDismiss
+    exit 1
+}
+
+$selectedPackages = ConvertTo-InstallPackageArray (Show-InstallSelectionWindow -Catalog $CategoryCatalog)
 
 if ($selectedPackages.Count -eq 0) {
     Write-Host '[~] No apps selected. Nothing to install.' -ForegroundColor DarkYellow
@@ -1120,7 +1215,7 @@ Write-Host ''
 $failures = 0
 $installed = 0
 $total = $selectedPackages.Count
-foreach ($package in ($selectedPackages | Sort-Object Name)) {
+foreach ($package in ($selectedPackages | Sort-Object { $_.Name })) {
     if (Install-SelectedPackage -Package $package) {
         $installed++
     } else {

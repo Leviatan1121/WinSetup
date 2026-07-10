@@ -1,6 +1,6 @@
 # WinSetup — system-wide removals, policies, and elevated privacy (HKLM + all users).
-# Self-elevates when run alone; Setup.bat uses Setup-Elevated.ps1 (one UAC) with -WinSetupElevated.
-# Run order: Setup.bat → Configure → Privacy → Performance → Setup-Elevated (Debloat) → pointer
+# Self-elevates when run alone (AllowFile.bat); WinSetup.ps1 calls with -WinSetupElevated (no extra UAC).
+# Run order: WinSetup.ps1 → Configure → Privacy → Performance → Debloat → pointer hooks
 
 param([switch]$WinSetupElevated)
 
@@ -15,7 +15,7 @@ if ($WinSetupElevated) {
     }
 } elseif (-not $isAdmin) {
     if (-not $PSCommandPath) {
-        Write-Error 'Debloat.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat).'
+        Write-Error 'Debloat.ps1 must be run from a file (e.g. WinSetup.ps1 or AllowFile.bat).'
         exit 1
     }
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
@@ -122,40 +122,18 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
 winget uninstall --name "Widgets Platform Runtime" --silent --accept-source-agreements --disable-interactivity 2>$null
 #endregion
 
-#region Copilot and Recall
-# Taskbar button, Copilot Appx, Windows AI policies (Recall snapshots off).
-Set-ItemProperty -Path $ExplorerPath -Name "ShowCopilotButton" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-
-foreach ($hive in @('HKLM:\SOFTWARE\Policies', 'HKCU:\Software\Policies')) {
-    $copilotPath = "$hive\Microsoft\Windows\WindowsCopilot"
-    if (-not (Test-Path $copilotPath)) { New-Item -Path $copilotPath -Force | Out-Null }
-    Set-ItemProperty -Path $copilotPath -Name "TurnOffWindowsCopilot" -Value 1 -Type DWord
-
-    $aiPath = "$hive\Microsoft\Windows\WindowsAI"
-    if (-not (Test-Path $aiPath)) { New-Item -Path $aiPath -Force | Out-Null }
-    Set-ItemProperty -Path $aiPath -Name "RemoveMicrosoftCopilotApp" -Value 1 -Type DWord
-    Set-ItemProperty -Path $aiPath -Name 'DisableAIDataAnalysis' -Value 1 -Type DWord
+#region Copilot, Recall, and integrated AI
+$aiScriptPath = Join-Path $PSScriptRoot 'WinSetup-AI-UpdateCleanup.ps1'
+if (Test-Path -LiteralPath $aiScriptPath) {
+    try {
+        . $aiScriptPath
+        Initialize-WinSetupAI
+    } catch {
+        Write-Warning "AI removal failed: $($_.Exception.Message)"
+    }
+} else {
+    Write-Warning 'WinSetup-AI-UpdateCleanup.ps1 not found - skipping AI removal.'
 }
-
-$windowsAiPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
-if (-not (Test-Path $windowsAiPolicy)) { New-Item -Path $windowsAiPolicy -Force | Out-Null }
-Set-ItemProperty -Path $windowsAiPolicy -Name 'AllowRecallEnablement' -Value 0 -Type DWord
-Set-ItemProperty -Path $windowsAiPolicy -Name 'TurnOffSavingSnapshots' -Value 1 -Type DWord
-
-foreach ($package in @('Microsoft.Copilot', 'Microsoft.Windows.Copilot')) {
-    Get-AppxPackage -Name $package -ErrorAction SilentlyContinue |
-        Remove-AppxPackage -ErrorAction SilentlyContinue
-    Get-AppxPackage -AllUsers -Name $package -ErrorAction SilentlyContinue |
-        Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-}
-
-Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-    Where-Object DisplayName -Like '*Copilot*' |
-    ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
-
-winget uninstall --id Microsoft.Copilot_8wekyb3d8bbwe --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --name "Microsoft Copilot" --silent --accept-source-agreements --disable-interactivity 2>$null
-Remove-Item -Path "$env:USERPROFILE\.copilot" -Recurse -Force -ErrorAction SilentlyContinue
 #endregion
 
 #region OneDrive

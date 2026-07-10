@@ -1,5 +1,10 @@
 # WinSetup — register Open-InstallApps.ps1 for after next reboot (Run key + marker).
-# Call once at end of Setup.bat only.
+# Call once from WinSetup.ps1.
+
+param(
+    [switch]$Register,
+    [string]$SourceDir = $PSScriptRoot
+)
 
 function Remove-WinSetupAppsLegacy {
     $winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
@@ -55,4 +60,8 @@ function Install-WinSetupAppsPrompt {
     $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`""
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name 'WinSetup-InstallApps' -Value $cmd -Type String
+}
+
+if ($Register) {
+    Install-WinSetupAppsPrompt -SourceDir $SourceDir
 }

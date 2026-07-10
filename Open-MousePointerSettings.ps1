@@ -1,4 +1,4 @@
-# WinSetup — after reboot: open Mouse pointer settings, then remove hook + self.
+# WinSetup — after reboot: open Mouse pointer settings, remove hook + self, clean setup temp dir.
 # Run key persists until LastBootUpTime is newer than the setup marker (real reboot).
 
 $winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
@@ -17,6 +17,11 @@ $bootAt = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime
 # Same boot session as setup (Explorer restart does not count) — wait for reboot.
 if ($bootAt -le $setupAt) {
     exit 0
+}
+
+$setupTempDir = Join-Path $env:TEMP 'WinSetup'
+if (Test-Path -LiteralPath $setupTempDir) {
+    Remove-Item -LiteralPath $setupTempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Start-Process 'ms-settings:easeofaccess-mousepointer'

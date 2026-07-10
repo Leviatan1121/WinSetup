@@ -18,30 +18,47 @@ start ms-cxh:localonly
 
 # WinSetup — documentación y checklist
 
-Descarga y ejecuta [Setup.bat](https://github.com/Leviatan1121/WinSetup/releases/latest/download/Setup.bat).
+Descarga y ejecuta [WinSetup.bat](https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.bat).
 
-Al terminar Setup.bat pide **cerrar sesión o reiniciar** para que el preset de rendimiento se refleje en `sysdm.cpl`. Tras el **primer reinicio real** se abren automáticamente:
+Al terminar WinSetup.ps1 pide **cerrar sesión o reiniciar** para que el preset de rendimiento se refleje en `sysdm.cpl`. Tras el **primer reinicio real** se abren automáticamente:
 
 1. **Ajustes → Puntero del mouse** (elegir color).
 2. **InstallApps** (selector gráfico de software).
 
 ---
 
-## Orden de ejecución (Setup.bat)
+## Orden de ejecución (WinSetup.bat → WinSetup.ps1)
+
+**Un solo UAC al inicio:** si lo apruebas, la ventana bootstrap cierra y `WinSetup.ps1` elevado es la única ventana principal. Cada script abre su propia ventana hija y cierra al terminar.
 
 | # | Fase | Admin | Script / acción |
 |---|------|-------|-----------------|
-| 0 | Helpers de usuario | No | Crea `%USERPROFILE%\bin`, añade al PATH, `AllowFile.bat` / `AllowProcess.bat` |
 | 1 | Windows Update Pauser | No | Descarga y ejecuta [WindowsUpdatePauser](https://github.com/Leviatan1121/WindowsUpdatePauser) |
-| 2 | Descarga de scripts | No | Release de GitHub → `%TEMP%\WinSetup` |
-| 3 | Configure | No | `Configure.ps1` |
-| 4 | Privacy | No | `Privacy.ps1` |
-| 5 | Performance (usuario) | No | `Performance.ps1` |
-| 6 | Debloat + Performance (sistema) | **Sí (UAC 1)** | `Setup-Elevated.ps1` → `Debloat.ps1` + `Performance.ps1 -SystemOnly` |
-| 7 | Remove Windows AI | **Sí (UAC 2)** | Script externo [zoicware/RemoveWindowsAI](https://github.com/zoicware/RemoveWindowsAI) |
-| 8 | Remote support | **Sí (UAC 3)** | `RemoteSupport.ps1` (opcional, interactivo) |
-| 9 | Hooks post-reboot | No | Registra puntero del mouse + InstallApps en `HKCU\...\Run` |
-| 10 | Limpieza | No | Borra `%TEMP%\WinSetup` |
+| 2 | Helpers de usuario | No | Crea `%USERPROFILE%\bin`, añade al PATH, `AllowFile.bat` / `AllowProcess.bat` |
+| 3 | Descarga de scripts | No | Release de GitHub → `%TEMP%\WinSetup` |
+| 4 | Configure | No | `Configure.ps1` |
+| 5 | Privacy | No | `Privacy.ps1` |
+| 6 | Performance (usuario) | No | `Performance.ps1` |
+| 7 | Winget upgrade | **Sí** | `WinSetup-WingetUpgrade.ps1` |
+| 8 | Winget pinning restore | No* | `WinSetup-WingetRestorePinning.ps1` (sesión Limited tras paso 7) |
+| 9 | Debloat | **Sí** | `Debloat.ps1 -WinSetupElevated` |
+| 10 | Performance (sistema) | **Sí** | `Performance.ps1 -SystemOnly` |
+| 11 | Hooks post-reboot | No | `Install-MousePointerPrompt.ps1 -Register` |
+| 12 | Hooks post-reboot | No | `Install-AppsPrompt.ps1 -Register` |
+| 13 | Remote support | **Sí** | `RemoteSupport.ps1` (opcional, interactivo) |
+
+\*El paso 8 se omite si se denegó el UAC (solo tiene sentido tras el paso 7).
+
+### Modo sin admin (UAC denegado)
+
+Si niegas el UAC, la ventana principal continúa en modo **Limited** y ejecuta los pasos 1–6 y 11–12. Se omiten con aviso explícito: winget upgrade/restore, Debloat, Performance sistema y Remote Support. Puedes volver a ejecutar `WinSetup.bat` y aprobar UAC para completar esos pasos.
+
+### Desarrollo local
+
+- Ejecuta `.\WinSetup.ps1` directamente desde el repo (sin descargar del release).
+- Opcional: `$env:WINSETUP_LOCAL=1` omite la descarga de assets si los scripts ya están en `$PSScriptRoot`.
+
+La carpeta `%TEMP%\WinSetup` (descargas del setup) se borra en el **primer reinicio**, cuando corre `Open-MousePointerSettings.ps1` — así no se pierde la limpieza si Remote Support pide reiniciar antes de terminar WinSetup.
 
 ---
 
@@ -155,7 +172,7 @@ Preset **Personalizado** equivalente a:
 - **Modo de juego automático**: Off.
 - **Game Bar (Win+G)**: se mantiene disponible.
 
-### Parte sistema (admin, en Setup-Elevated)
+### Parte sistema (admin, paso 10 de WinSetup.ps1)
 - Prioridad de primer plano: `Win32PrioritySeparation` = 38 (favorece programas).
 - MMCSS `SystemResponsiveness` = 0, `NetworkThrottlingIndex` = máximo.
 - Política Game DVR (HKLM): desactivado.
@@ -178,11 +195,18 @@ Preset **Personalizado** equivalente a:
 - Política: sin News and Interests.
 - Desinstala **Web Experience Pack** y **Widgets Platform Runtime**.
 
-### Copilot y Recall
-- Botón Copilot en barra: oculto.
-- Políticas HKLM/HKCU: Copilot off, quitar app Copilot, sin análisis de datos IA.
-- Recall: sin habilitación ni guardado de instantáneas.
-- Desinstala paquetes Copilot y carpeta `%USERPROFILE%\.copilot`.
+### Copilot, Recall e IA integrada
+- Botón Copilot en barra: oculto; pins de Copilot/Recall desactivados.
+- Políticas HKLM/HKCU: Copilot off, quitar app Copilot, sin análisis de datos IA, Click to Do, Settings Agent, Agent Connectors/Workspaces.
+- Consentimiento: sin acceso de apps a IA generativa ni modelos del sistema.
+- Shell/runtime: `IsCopilotAvailable`, `AllowCopilotRuntime`, Taskbar Companion off.
+- `IntegratedServicesRegionPolicySet.json` y `VisualAssistActions.json`: IA generativa desactivada.
+- Recall: políticas off, feature opcional deshabilitada vía DISM, sin guardado de instantáneas.
+- Appx/CBS: AIX, CoreAI, Copilot.Provider, aimgr, WritingAssistant, WindowsWorkload.*, AIFabric.CBS*.
+- Tareas `\Microsoft\Windows\WindowsAI\*` y servicios `MicrosoftCopilotElevationService`, `WSAIFabricSvc`, `AarSvc`.
+- Política Store para bloquear reinstalación de paquetes Copilot/IA.
+- Desinstala paquetes Copilot (winget/Appx) y carpeta `%USERPROFILE%\.copilot`.
+- **Anti-IA** (un solo script [`WinSetup-AI-UpdateCleanup.ps1`](WinSetup-AI-UpdateCleanup.ps1)): Copilot, Recall, políticas, Appx/CBS, Notepad/Paint/Photos/Voice Access/Gaming Copilot, limpieza de archivos, `.cab` anti-reinstalación y tarea post-update. `Debloat.ps1` solo lo invoca una vez.
 
 ### OneDrive
 - Desinstala OneDrive (winget + setup oficial).
@@ -228,15 +252,7 @@ Feedback Hub, Weather, Phone Link, Family Safety, Get Started, Journal, Microsof
 
 ---
 
-## 7. Remove Windows AI (externo, admin)
-
-Script de terceros que elimina componentes de IA de Windows (complementa Debloat).
-
-**Comprobar:** que Copilot / Recall / funciones IA no reaparezcan según lo esperado en tu build.
-
----
-
-## 8. Remote support (`RemoteSupport.ps1`) — admin, interactivo
+## 7. Remote support (`RemoteSupport.ps1`) — admin, interactivo
 
 Pregunta **Enter = Sí** para desinstalar:
 
@@ -249,7 +265,7 @@ Si pulsas cualquier otra tecla, se omite.
 
 ---
 
-## 9. Tras Setup.bat — antes del reinicio
+## 8. Tras WinSetup — antes del reinicio
 
 Mensajes finales indican:
 - Cerrar sesión o reiniciar (rendimiento en `sysdm.cpl`).
@@ -259,23 +275,25 @@ Archivos persistentes hasta el post-reboot:
 
 | Ruta | Uso |
 |------|-----|
+| `%TEMP%\WinSetup\` | Descargas del setup (se borra en el primer reinicio) |
 | `%LOCALAPPDATA%\WinSetup\` | Scripts y marcadores temporales |
 | `HKCU\...\Run\WinSetup-MousePointerSettings` | Abre ajustes del puntero tras reinicio |
 | `HKCU\...\Run\WinSetup-InstallApps` | Lanza InstallApps tras reinicio |
 
 ---
 
-## 10. Post-reboot — Puntero del mouse
+## 9. Post-reboot — Puntero del mouse
 
 1. Compara `LastBootUpTime` con el marcador `.open-mouse-after-reboot` (reinicio real, no solo reinicio de Explorer).
-2. Abre `ms-settings:easeofaccess-mousepointer`.
-3. Elimina hook, marcador y el script copiado.
+2. Borra `%TEMP%\WinSetup` (descargas del setup; diferido por si Remote Support reinicia antes de acabar WinSetup).
+3. Abre `ms-settings:easeofaccess-mousepointer`.
+4. Elimina hook, marcador y el script copiado.
 
 **Comprobar:** elige el **color del puntero** que quieras.
 
 ---
 
-## 11. Post-reboot — InstallApps (`InstallApps.ps1`)
+## 10. Post-reboot — InstallApps (`InstallApps.ps1`)
 
 ### Interfaz
 - Ventana WPF oscura con categorías, búsqueda por nombre y contador de selección.
@@ -316,7 +334,7 @@ Tras ejecutarse, borra `InstallApps.ps1`, marcador, hook Run y `Open-InstallApps
 Usa esto mañana en orden:
 
 - [ ] Windows actualizado antes o después del OOBE según prefieras
-- [ ] `Setup.bat` completado sin errores críticos
+- [ ] `WinSetup.bat` completado sin errores críticos
 - [ ] Tema oscuro, explorador (extensiones, ocultos, Este equipo)
 - [ ] Barra de tareas oculta, sin búsqueda, sin widgets
 - [ ] Inicio sin recomendaciones; layout vacío
@@ -335,15 +353,18 @@ Usa esto mañana en orden:
 
 | Archivo | Rol |
 |---------|-----|
-| `Setup.bat` | Orquestador principal |
+| `WinSetup.bat` | Stub: descarga `WinSetup.ps1` del release y lo ejecuta |
+| `WinSetup.ps1` | Orquestador principal (1 UAC, ventana única) |
+| `WinSetup-Process.ps1` | Helpers de ventanas hijas y tareas Limited |
+| `WinSetup-WingetUpgrade.ps1` | Actualiza App Installer (admin) |
+| `WinSetup-WingetRestorePinning.ps1` | Restaura pinning de certificados winget |
 | `Configure.ps1` | Apariencia y shell (HKCU) |
 | `Privacy.ps1` | Privacidad usuario (HKCU) |
 | `Performance.ps1` | Rendimiento visual + gaming (HKCU / HKLM) |
-| `Setup-Elevated.ps1` | Pasada admin: Debloat + Performance sistema |
 | `Debloat.ps1` | Eliminaciones y políticas sistema |
 | `RemoteSupport.ps1` | Quick Assist / RDP opcionales |
 | `Install-MousePointerPrompt.ps1` | Registra hook del puntero |
-| `Open-MousePointerSettings.ps1` | Runner post-reboot puntero |
+| `Open-MousePointerSettings.ps1` | Runner post-reboot puntero; limpia `%TEMP%\WinSetup` |
 | `Install-AppsPrompt.ps1` | Registra hook de InstallApps |
 | `Open-InstallApps.ps1` | Runner post-reboot InstallApps |
 | `InstallApps.ps1` | Selector e instalador de software (release; puede estar en `.gitignore` local) |

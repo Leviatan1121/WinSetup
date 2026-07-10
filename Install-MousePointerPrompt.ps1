@@ -1,5 +1,10 @@
 # WinSetup — register Open-MousePointerSettings.ps1 for after next reboot (Run key + marker).
-# Call once at end of Setup.bat only — not during Configure.
+# Call once from WinSetup.ps1 — not during Configure.
+
+param(
+    [switch]$Register,
+    [string]$SourceDir = $PSScriptRoot
+)
 
 function Remove-WinSetupCursorLegacy {
     $startupPath = [Environment]::GetFolderPath('Startup')
@@ -65,4 +70,8 @@ function Install-WinSetupMousePointerSettingsPrompt {
     $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dest`""
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name 'WinSetup-MousePointerSettings' -Value $cmd -Type String
+}
+
+if ($Register) {
+    Install-WinSetupMousePointerSettingsPrompt -SourceDir $SourceDir
 }

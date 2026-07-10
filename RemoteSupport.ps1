@@ -1,5 +1,5 @@
 # WinSetup — optional removal of Quick Assist and Remote Desktop Connection.
-# Self-elevates when run alone; Setup.bat uses Setup-Elevated.ps1 with -WinSetupElevated.
+# Self-elevates when run alone (AllowFile.bat); WinSetup.ps1 calls with -WinSetupElevated (no extra UAC).
 # Order: Quick Assist first, then Remote Desktop Connection (last — may prompt restart).
 
 param([switch]$WinSetupElevated)
@@ -15,7 +15,7 @@ if ($WinSetupElevated) {
     }
 } elseif (-not $isAdmin) {
     if (-not $PSCommandPath) {
-        Write-Error 'RemoteSupport.ps1 must be run from a file (e.g. Setup.bat or AllowFile.bat).'
+        Write-Error 'RemoteSupport.ps1 must be run from a file (e.g. WinSetup.ps1 or AllowFile.bat).'
         exit 1
     }
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(

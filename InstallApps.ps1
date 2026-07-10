@@ -926,55 +926,11 @@ function Add-UserPathEntry {
     return $true
 }
 
-function Remove-WinSetupMiseProfileActivation {
-    $marker = '# WinSetup: mise activate'
-    $profilePaths = @(
-        (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1')
-        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
-    )
-
-    foreach ($profilePath in $profilePaths) {
-        if (-not (Test-Path -LiteralPath $profilePath)) {
-            continue
-        }
-
-        $lines = Get-Content -LiteralPath $profilePath
-        $filtered = [System.Collections.ArrayList]@()
-        $skipNext = $false
-
-        foreach ($line in $lines) {
-            if ($line -match [regex]::Escape($marker)) {
-                $skipNext = $true
-                continue
-            }
-
-            if ($skipNext -and $line -match 'mise activate') {
-                $skipNext = $false
-                continue
-            }
-
-            $skipNext = $false
-            [void]$filtered.Add($line)
-        }
-
-        if ($filtered.Count -ne $lines.Count) {
-            if ($filtered.Count -gt 0) {
-                Set-Content -LiteralPath $profilePath -Value $filtered -Encoding utf8
-            } else {
-                Remove-Item -LiteralPath $profilePath -Force
-            }
-            Write-Host "[+] Removed legacy WinSetup mise activation from $profilePath" -ForegroundColor Green
-        }
-    }
-}
-
 function Initialize-MiseEnvironment {
     $miseExe = Get-MiseExecutable
     if (-not $miseExe) {
         return $false
     }
-
-    Remove-WinSetupMiseProfileActivation
 
     $added = $false
     $miseBin = Split-Path -Parent $miseExe

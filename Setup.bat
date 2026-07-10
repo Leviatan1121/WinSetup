@@ -33,10 +33,10 @@ if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out
 
 Set-Content -Path "$BinDir\AllowFile.bat" -Value @(
     '@echo off'
-    'powershell -ExecutionPolicy Bypass -File "%~f1"'
+    'powershell -NoProfile -ExecutionPolicy Bypass -File "%~f1"'
 )
 
-$BatProcessContent = "@echo off`npowershell -NoExit -ExecutionPolicy Bypass"
+$BatProcessContent = "@echo off`npowershell -NoExit -NoProfile -ExecutionPolicy Bypass"
 Set-Content -Path "$BinDir\AllowProcess.bat" -Value $BatProcessContent
 
 $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")

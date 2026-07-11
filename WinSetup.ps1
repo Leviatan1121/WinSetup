@@ -1,11 +1,15 @@
 # WinSetup — main orchestrator. Single UAC at start; one main window; child window per script.
-# Entry: WinSetup.bat (downloads this file) or .\WinSetup.ps1 (development).
+# Entry: WinSetup.bat | irm | iex | .\WinSetup.ps1 (development).
 
 param(
-    [ValidateSet('Elevated', 'Limited')]
     [string]$OrchestratorMode,
     [string]$ScriptDir
 )
+
+if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
+    Write-Error "OrchestratorMode invalido: $OrchestratorMode"
+    exit 1
+}
 
 $ErrorActionPreference = 'Continue'
 $ReleaseBaseUrl = 'https://github.com/Leviatan1121/WinSetup/releases/latest/download'
@@ -15,6 +19,23 @@ function Get-WinSetupDefaultScriptDir {
         return $PSScriptRoot
     }
     return Join-Path $env:TEMP 'WinSetup'
+}
+
+function Get-WinSetupEntryScriptPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Dir
+    )
+
+    if ($PSCommandPath) {
+        return $PSCommandPath
+    }
+
+    New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+    $savedScript = Join-Path $Dir 'WinSetup.ps1'
+    Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (irm/iex mode)...' -ForegroundColor DarkGray
+    Invoke-RestMethod -Uri "$ReleaseBaseUrl/WinSetup.ps1" -OutFile $savedScript
+    return $savedScript
 }
 
 function Test-WinSetupIsAdmin {
@@ -138,12 +159,14 @@ if (-not $ScriptDir) {
     $ScriptDir = Get-WinSetupDefaultScriptDir
 }
 
-if (-not $OrchestratorMode) {
+if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     New-Item -ItemType Directory -Path $ScriptDir -Force | Out-Null
+
+    $entryScript = Get-WinSetupEntryScriptPath -Dir $ScriptDir
 
     $elevArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass',
-        '-File', $PSCommandPath,
+        '-File', $entryScript,
         '-OrchestratorMode', 'Elevated',
         '-ScriptDir', $ScriptDir
     )

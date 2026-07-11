@@ -18,7 +18,21 @@ start ms-cxh:localonly
 
 # WinSetup — documentación y checklist
 
-Descarga y ejecuta [WinSetup.bat](https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.bat).
+## Cómo ejecutar
+
+**Opción A — BAT** (doble clic o cmd). Descarga `WinSetup.ps1` del release y lo lanza:
+
+[WinSetup.bat](https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.bat)
+
+**Opción B — PowerShell** (one-liner, mismo flujo y UAC que el `.bat`):
+
+```powershell
+irm "https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.ps1" | iex
+```
+
+Requiere PowerShell 5+ con acceso a internet. Si deniegas el UAC, se ejecuta el modo limitado (sin pasos de administrador).
+
+**Desarrollo local:** `.\WinSetup.ps1` desde el repo; opcional `$env:WINSETUP_LOCAL=1` para usar scripts locales sin descargar assets.
 
 Al terminar WinSetup.ps1 pide **cerrar sesión o reiniciar** para que el preset de rendimiento se refleje en `sysdm.cpl`. Tras el **primer reinicio real** se abren automáticamente:
 
@@ -27,7 +41,7 @@ Al terminar WinSetup.ps1 pide **cerrar sesión o reiniciar** para que el preset 
 
 ---
 
-## Orden de ejecución (WinSetup.bat → WinSetup.ps1)
+## Orden de ejecución (WinSetup.ps1)
 
 **Un solo UAC al inicio:** si lo apruebas, la ventana bootstrap cierra y `WinSetup.ps1` elevado es la única ventana principal. Cada script abre su propia ventana hija y cierra al terminar.
 
@@ -51,12 +65,7 @@ Al terminar WinSetup.ps1 pide **cerrar sesión o reiniciar** para que el preset 
 
 ### Modo sin admin (UAC denegado)
 
-Si niegas el UAC, la ventana principal continúa en modo **Limited** y ejecuta los pasos 1–6 y 11–12. Se omiten con aviso explícito: winget upgrade/restore, Debloat, Performance sistema y Remote Support. Puedes volver a ejecutar `WinSetup.bat` y aprobar UAC para completar esos pasos.
-
-### Desarrollo local
-
-- Ejecuta `.\WinSetup.ps1` directamente desde el repo (sin descargar del release).
-- Opcional: `$env:WINSETUP_LOCAL=1` omite la descarga de assets si los scripts ya están en `$PSScriptRoot`.
+Si niegas el UAC, la ventana principal continúa en modo **Limited** y ejecuta los pasos 1–6 y 11–12. Se omiten con aviso explícito: winget upgrade/restore, Debloat, Performance sistema y Remote Support. Puedes volver a ejecutar WinSetup (`.bat` o el one-liner de PowerShell) y aprobar UAC para completar esos pasos.
 
 La carpeta `%TEMP%\WinSetup` (descargas del setup) se borra en el **primer reinicio**, cuando corre `Open-MousePointerSettings.ps1` — así no se pierde la limpieza si Remote Support pide reiniciar antes de terminar WinSetup.
 
@@ -334,7 +343,7 @@ Tras ejecutarse, borra `InstallApps.ps1`, marcador, hook Run y `Open-InstallApps
 Usa esto mañana en orden:
 
 - [ ] Windows actualizado antes o después del OOBE según prefieras
-- [ ] `WinSetup.bat` completado sin errores críticos
+- [ ] WinSetup completado sin errores críticos (`.bat` o `irm | iex`)
 - [ ] Tema oscuro, explorador (extensiones, ocultos, Este equipo)
 - [ ] Barra de tareas oculta, sin búsqueda, sin widgets
 - [ ] Inicio sin recomendaciones; layout vacío
@@ -354,7 +363,7 @@ Usa esto mañana en orden:
 | Archivo | Rol |
 |---------|-----|
 | `WinSetup.bat` | Stub: descarga `WinSetup.ps1` del release y lo ejecuta |
-| `WinSetup.ps1` | Orquestador principal (1 UAC, ventana única) |
+| `WinSetup.ps1` | Orquestador principal (1 UAC, ventana única); también vía `irm | iex` |
 | `WinSetup-Process.ps1` | Helpers de ventanas hijas y tareas Limited |
 | `WinSetup-WingetUpgrade.ps1` | Actualiza App Installer (admin) |
 | `WinSetup-WingetRestorePinning.ps1` | Restaura pinning de certificados winget |

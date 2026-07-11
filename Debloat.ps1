@@ -4,6 +4,8 @@
 
 param([switch]$WinSetupElevated)
 
+. (Join-Path $PSScriptRoot 'WinSetup-WingetHelpers.ps1')
+
 #region Elevation
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -109,8 +111,8 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
     Where-Object DisplayName -Like '*WebExperience*' |
     ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
 
-winget uninstall --id 9MSSGKG348SP --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall "Windows Web Experience Pack" --silent --accept-source-agreements --disable-interactivity 2>$null
+Invoke-WinSetupWingetUninstall --id 9MSSGKG348SP --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --name "Windows Web Experience Pack" --silent --accept-source-agreements --disable-interactivity
 
 Get-AppxPackage -Name "Microsoft.WidgetsPlatformRuntime" -ErrorAction SilentlyContinue |
     Remove-AppxPackage -ErrorAction SilentlyContinue
@@ -119,7 +121,7 @@ Get-AppxPackage -AllUsers -Name "Microsoft.WidgetsPlatformRuntime" -ErrorAction 
 Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
     Where-Object DisplayName -Like '*WidgetsPlatformRuntime*' |
     ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
-winget uninstall --name "Widgets Platform Runtime" --silent --accept-source-agreements --disable-interactivity 2>$null
+Invoke-WinSetupWingetUninstall --name "Widgets Platform Runtime" --silent --accept-source-agreements --disable-interactivity
 #endregion
 
 #region Copilot, Recall, and integrated AI
@@ -140,7 +142,7 @@ if (Test-Path -LiteralPath $aiScriptPath) {
 # Stop sync client, uninstall all channels, and block reinstall via policy.
 Get-Process -Name OneDrive -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-winget uninstall --name "Microsoft OneDrive" --silent --accept-source-agreements --disable-interactivity 2>$null
+Invoke-WinSetupWingetUninstall --name "Microsoft OneDrive" --silent --accept-source-agreements --disable-interactivity
 
 foreach ($setupPath in @(
     "$env:SystemRoot\System32\OneDriveSetup.exe",
@@ -295,17 +297,17 @@ Remove-BuiltInApps @(
 Get-Process -Name 'WhatsApp', 'WhatsAppDesktop' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-AppsByPattern @('*WhatsApp*', '*5319275A*')
 Uninstall-Win32AppByName '*WhatsApp*'
-winget uninstall --name "WhatsApp" --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity 2>$null
+Invoke-WinSetupWingetUninstall --name "WhatsApp" --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --id 5319275A.WhatsAppDesktop --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity
 
 # MSIX-only packages (winget list / Get-AppxPackage; not in Control Panel).
-winget uninstall --id 9NZBF4GT040C --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --name "Microsoft Bing" --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --name "Dev Home" --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --id 9NFTCH6J7FHV --silent --accept-source-agreements --disable-interactivity 2>$null
-winget uninstall --name "Power Automate" --silent --accept-source-agreements --disable-interactivity 2>$null
+Invoke-WinSetupWingetUninstall --id 9NZBF4GT040C --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --name "Microsoft Bing" --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --name "Dev Home" --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --id 9NFTCH6J7FHV --silent --accept-source-agreements --disable-interactivity
+Invoke-WinSetupWingetUninstall --name "Power Automate" --silent --accept-source-agreements --disable-interactivity
 #endregion
 
 #region Taskbar > Unpin all apps (all profiles)
@@ -450,5 +452,3 @@ Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
 Start-Process explorer.exe
 #endregion
-
-Read-Host 'Presione Enter para continuar'

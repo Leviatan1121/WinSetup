@@ -7,7 +7,7 @@ param(
 )
 
 if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
-    Write-Error "OrchestratorMode invalido: $OrchestratorMode"
+    Write-Error "Invalid OrchestratorMode: $OrchestratorMode"
     exit 1
 }
 
@@ -54,21 +54,52 @@ function Test-WinSetupIsAdmin {
 function Write-WinSetupStepHeader {
     param([int]$Index, [int]$Total, [string]$Label, [string]$Level)
     Write-Host "=========================================================" -ForegroundColor Cyan
-    Write-Host "[*] Paso $Index/$Total`: $Label ($Level)..." -ForegroundColor Cyan
+    Write-Host "[*] Step $Index/$Total`: $Label ($Level)..." -ForegroundColor Cyan
     Write-Host "=========================================================" -ForegroundColor Cyan
 }
 
 function Write-WinSetupStepResult {
     param([string]$Label, [int]$ExitCode, [switch]$Skipped)
     if ($Skipped) {
-        Write-Host "[~] $Label omitido (requiere admin)." -ForegroundColor Yellow
+        Write-Host "[~] $Label skipped (requires admin)." -ForegroundColor Yellow
         return
     }
     if ($ExitCode -eq 0) {
-        Write-Host "[+] $Label completado (exit 0)." -ForegroundColor Green
+        Write-Host "[+] $Label completed (exit 0)." -ForegroundColor Green
     } else {
-        Write-Warning "$Label termino con codigo $ExitCode."
+        Write-Warning "$Label finished with exit code $ExitCode."
     }
+}
+
+function Get-WinSetupPausedPs1LaunchArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath,
+        [string[]]$ArgumentList = @()
+    )
+
+    $targetEscaped = $TargetPath -replace "'", "''"
+    if ($ArgumentList -and $ArgumentList.Count -gt 0) {
+        $escapedArgs = ($ArgumentList | ForEach-Object { "'$($_ -replace "'", "''")'" }) -join ', '
+        $invokeLine = "& '$targetEscaped' @($escapedArgs)"
+    } else {
+        $invokeLine = "& '$targetEscaped'"
+    }
+
+    $command = @"
+`$ErrorActionPreference = 'Continue'
+`$code = 0
+try {
+    $invokeLine
+    if (`$null -ne `$LASTEXITCODE) { `$code = `$LASTEXITCODE }
+} catch {
+    `$code = 1
+}
+Read-Host 'Press Enter to close this window'
+exit `$code
+"@
+
+    return @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $command)
 }
 
 function Save-WinSetupReleaseFile {
@@ -131,7 +162,7 @@ function Start-WinSetupUserContextProcess {
     )
 
     if ($FilePath -like '*.ps1') {
-        $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $FilePath) + $ArgumentList
+        $psArgs = Get-WinSetupPausedPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
         return $proc.ExitCode
     }
@@ -158,13 +189,13 @@ function Start-WinSetupChildProcess {
     )
 
     if (-not (Test-Path -LiteralPath $TargetPath)) {
-        Write-Warning "No se encontro: $TargetPath"
+        Write-Warning "Not found: $TargetPath"
         return 1
     }
 
     if ($Level -eq 'Elevated') {
         if ($TargetPath -like '*.ps1') {
-            $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $TargetPath) + $ArgumentList
+            $psArgs = Get-WinSetupPausedPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList
             $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
             return $proc.ExitCode
         }
@@ -204,7 +235,7 @@ function Get-WinSetupReleaseAssets {
         'Install-MousePointerPrompt.ps1', 'Open-MousePointerSettings.ps1',
         'Install-AppsPrompt.ps1', 'Open-InstallApps.ps1', 'InstallApps.ps1',
         'WinSetup-AI-UpdateCleanup.ps1', 'WinSetup-Process.ps1',
-        'WinSetup-WingetUpgrade.ps1', 'WinSetup-WingetRestorePinning.ps1',
+        'WinSetup-WingetUpgrade.ps1', 'WinSetup-WingetHelpers.ps1',
         'Debloat.ps1', 'RemoteSupport.ps1'
     )
 }
@@ -212,28 +243,54 @@ function Get-WinSetupReleaseAssets {
 function Save-WinSetupReleaseAssets {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Dir
+        [string]$Dir,
+        [string]$ProgressLabel = '[*] Downloading {0}...'
     )
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     $useLocal = ($env:WINSETUP_LOCAL -eq '1')
+    $downloaded = 0
+    $failed = 0
+    $skipped = 0
+    $lastLabelLength = 0
 
     foreach ($file in (Get-WinSetupReleaseAssets)) {
         $dest = Join-Path $Dir $file
         $localSource = Join-Path $PSScriptRoot $file
 
         if ($useLocal -and (Test-Path -LiteralPath $localSource)) {
+            $label = ($ProgressLabel -f "$file (local)")
+            $pad = if ($label.Length -lt $lastLabelLength) { ' ' * ($lastLabelLength - $label.Length) } else { '' }
+            Write-Host "`r$label$pad" -NoNewline -ForegroundColor DarkGray
+            $lastLabelLength = $label.Length
             Copy-Item -LiteralPath $localSource -Destination $dest -Force
-            Write-Host "[*] Using local $file" -ForegroundColor DarkGray
+            $downloaded++
             continue
         }
 
-        Write-Host "[*] Downloading $file..." -ForegroundColor DarkGray
+        $label = $ProgressLabel -f $file
+        $pad = if ($label.Length -lt $lastLabelLength) { ' ' * ($lastLabelLength - $label.Length) } else { '' }
+        Write-Host "`r$label$pad" -NoNewline -ForegroundColor DarkGray
+        $lastLabelLength = $label.Length
+
         try {
             Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/$file" -Destination $dest
+            $downloaded++
         } catch {
+            Write-Host ''
             Write-Warning "Failed to download ${file}: $($_.Exception.Message)"
+            $failed++
         }
+    }
+
+    if ($lastLabelLength -gt 0) {
+        Write-Host ''
+    }
+
+    return @{
+        Downloaded = $downloaded
+        Failed     = $failed
+        Skipped    = $skipped
     }
 }
 
@@ -284,7 +341,7 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     }
 
     Write-Host '=========================================================' -ForegroundColor Yellow
-    Write-Host '[!] UAC denegado - modo limitado (sin pasos de administrador).' -ForegroundColor Yellow
+    Write-Host '[!] UAC denied — running in limited mode (no admin steps).' -ForegroundColor Yellow
     Write-Host '=========================================================' -ForegroundColor Yellow
     $OrchestratorMode = 'Limited'
 }
@@ -298,10 +355,10 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
 
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
-    Write-Host '[!] WinSetup - modo administrador (1 UAC)' -ForegroundColor Cyan
+    Write-Host '[!] WinSetup — administrator mode (single UAC)' -ForegroundColor Cyan
 } else {
-    Write-Host '[!] WinSetup - modo limitado (sin admin)' -ForegroundColor Cyan
-    Write-Host '[~] Se omitiran: winget upgrade, Debloat, Performance (sistema), Remote Support.' -ForegroundColor Yellow
+    Write-Host '[!] WinSetup — limited mode (no admin)' -ForegroundColor Cyan
+    Write-Host '[~] Skipping: winget upgrade, Debloat, Performance (system), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
 
@@ -317,14 +374,14 @@ foreach ($step in $steps) {
 
     if ($skip) {
         $skippedAdmin.Add($step.Label)
-        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Omitido'
+        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped'
         Write-WinSetupStepResult -Label $step.Label -ExitCode 0 -Skipped
         continue
     }
 
     if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir)) {
-        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Omitido'
-        Write-Host '[~] Ya ejecutado en esta sesion.' -ForegroundColor DarkGray
+        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped'
+        Write-Host '[~] Already run in this session.' -ForegroundColor DarkGray
         Write-WinSetupStepResult -Label $step.Label -ExitCode 0
         continue
     }
@@ -332,6 +389,7 @@ foreach ($step in $steps) {
     Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level $step.Level
 
     $exitCode = 0
+    $downloadStats = $null
     try {
         switch ($step.Type) {
             'External' {
@@ -340,7 +398,10 @@ foreach ($step in $steps) {
             'Inline' {
                 switch ($step.Id) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
-                    'Download' { Save-WinSetupReleaseAssets -Dir $ScriptDir }
+                    'Download' {
+                        $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir
+                        if ($downloadStats.Failed -gt 0) { $exitCode = 1 }
+                    }
                 }
             }
             'Script' {
@@ -364,6 +425,15 @@ foreach ($step in $steps) {
     }
 
     Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
+
+    if ($step.Id -eq 'Download' -and $downloadStats) {
+        Write-Host '=========================================================' -ForegroundColor Cyan
+        if ($downloadStats.Failed -gt 0) {
+            Write-Warning "Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed."
+        } else {
+            Write-Host "[+] Downloaded $($downloadStats.Downloaded) assets." -ForegroundColor Green
+        }
+    }
 }
 
 Write-Host '=========================================================' -ForegroundColor Yellow
@@ -375,11 +445,11 @@ if ($orchestratorIsAdmin) {
     Write-Host '    If RDP uninstall prompted for restart, reboot when ready.' -ForegroundColor Yellow
 }
 if ($skippedAdmin.Count -gt 0) {
-    Write-Host '[~] Pasos omitidos por falta de admin:' -ForegroundColor Yellow
+    Write-Host '[~] Steps skipped (no admin):' -ForegroundColor Yellow
     foreach ($name in $skippedAdmin) {
         Write-Host "    - $name" -ForegroundColor Yellow
     }
 }
 Write-Host '=========================================================' -ForegroundColor Yellow
 
-Read-Host 'Presione Enter para continuar'
+Read-Host 'Press Enter to continue'

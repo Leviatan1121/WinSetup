@@ -1,6 +1,11 @@
 # WinSetup — all anti-AI removal (Copilot, Recall, integrated AI, post-update persistence).
 # Called once from Debloat.ps1; scheduled task re-runs removal after Windows updates.
 
+$helpersPath = Join-Path $PSScriptRoot 'WinSetup-WingetHelpers.ps1'
+if (Test-Path -LiteralPath $helpersPath) {
+    . $helpersPath
+}
+
 function Get-WinSetupOSBuild {
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion')
     try {
@@ -153,14 +158,9 @@ function Set-WinSetupAIPolicies {
     Set-ItemProperty -Path $voiceAccessKey -Name 'TextCorrection' -Value 1 -Type DWord
 
     $gamingAiKey = 'HKLM:\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Microsoft.Xbox.GamingAI.Companion.Host.GamingCompanionHostOptions'
-    try {
-        if (-not (Test-Path $gamingAiKey)) {
-            New-Item -Path $gamingAiKey -Force -ErrorAction Stop | Out-Null
-        }
-        Set-ItemProperty -Path $gamingAiKey -Name 'ActivationType' -Value 0 -Type DWord -ErrorAction Stop
-        Set-ItemProperty -Path $gamingAiKey -Name 'Server' -Value ' ' -Type String -ErrorAction Stop
-    } catch {
-        Write-Host "[~] Gaming Copilot registry key skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+    if (Test-Path -LiteralPath $gamingAiKey) {
+        Set-ItemProperty -Path $gamingAiKey -Name 'ActivationType' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $gamingAiKey -Name 'Server' -Value ' ' -Type String -ErrorAction SilentlyContinue
     }
 
     $explorerPolicy = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
@@ -517,8 +517,8 @@ function Invoke-WinSetupAIRemoval {
     Remove-WinSetupAIAppxPackages
     Remove-WinSetupAICBSPackages
     Remove-WinSetupAITasksAndServices
-    winget uninstall --id Microsoft.Copilot_8wekyb3d8bbwe --silent --accept-source-agreements --disable-interactivity 2>$null
-    winget uninstall --name "Microsoft Copilot" --silent --accept-source-agreements --disable-interactivity 2>$null
+    Invoke-WinSetupWingetUninstall --id Microsoft.Copilot_8wekyb3d8bbwe --silent --accept-source-agreements --disable-interactivity
+    Invoke-WinSetupWingetUninstall --name "Microsoft Copilot" --silent --accept-source-agreements --disable-interactivity
     Disable-WinSetupGamingCopilot
     Disable-WinSetupPhotosAI
     Remove-WinSetupAIFiles
@@ -566,6 +566,11 @@ function Register-WinSetupAIUpdateCleanupTask {
     $destDir = Join-Path $env:ProgramData 'WinSetup'
     if (-not (Test-Path $destDir)) { New-Item -Path $destDir -ItemType Directory -Force | Out-Null }
     Copy-Item -LiteralPath $SourceScript -Destination (Join-Path $destDir 'WinSetup-AI-UpdateCleanup.ps1') -Force
+
+    $helpersSource = Join-Path (Split-Path -Parent $SourceScript) 'WinSetup-WingetHelpers.ps1'
+    if (Test-Path -LiteralPath $helpersSource) {
+        Copy-Item -LiteralPath $helpersSource -Destination (Join-Path $destDir 'WinSetup-WingetHelpers.ps1') -Force
+    }
 
     Set-WinSetupCachedBuild
 

@@ -46,8 +46,9 @@ function Resolve-WinSetupWingetExitCode {
         [int]$ExitCode
     )
 
-    $asUInt = [uint32][int64]$ExitCode
-    $normalized = [int32]$asUInt
+    $bytes = [BitConverter]::GetBytes([int32]$ExitCode)
+    $asUInt = [BitConverter]::ToUInt32($bytes, 0)
+    $normalized = [BitConverter]::ToInt32($bytes, 0)
     $hex = '0x{0:X8}' -f $asUInt
 
     $names = @{

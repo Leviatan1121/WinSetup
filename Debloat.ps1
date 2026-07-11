@@ -420,10 +420,6 @@ Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOPercentageMaxBackgro
 Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOAllowUploadWhileOnBattery' -Value 0 -Type DWord
 #endregion
 
-Write-Host "=========================================================" -ForegroundColor Cyan
-Write-Host "[!] Debloat apps applied successfully." -ForegroundColor Cyan
-Write-Host "=========================================================" -ForegroundColor Cyan
-
 #region Shell > Restart Explorer
 Write-Host '[*] Restarting Explorer...' -ForegroundColor DarkGray
 Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue

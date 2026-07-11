@@ -13,9 +13,6 @@ if ($SystemOnly) {
     if (-not (Test-Path $gameDvrPolicy)) { New-Item -Path $gameDvrPolicy -Force | Out-Null }
     Set-ItemProperty -Path $gameDvrPolicy -Name 'AllowGameDVR' -Value 0 -Type DWord
 
-    Write-Host '=========================================================' -ForegroundColor Cyan
-    Write-Host '[!] Performance (system) applied.' -ForegroundColor Cyan
-    Write-Host '=========================================================' -ForegroundColor Cyan
     exit 0
 }
 #endregion
@@ -114,5 +111,4 @@ $nullResult = [UIntPtr]::Zero
     [IntPtr]0xFFFF, 0x001A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$nullResult)
 #endregion
 
-Write-Host '[+] Performance (user) applied.' -ForegroundColor Green
 exit 0

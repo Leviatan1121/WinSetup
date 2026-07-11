@@ -78,7 +78,4 @@ if (-not (Test-Path $trainedDataStore)) { New-Item -Path $trainedDataStore -Forc
 Set-ItemProperty -Path $trainedDataStore -Name 'HarvestContacts' -Value 0 -Type DWord
 #endregion
 
-Write-Host "=========================================================" -ForegroundColor Cyan
-Write-Host "[!] Privacy settings applied successfully." -ForegroundColor Cyan
-Write-Host "=========================================================" -ForegroundColor Cyan
 exit 0

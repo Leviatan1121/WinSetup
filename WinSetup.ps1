@@ -16,17 +16,13 @@ $script:WinSetupProgressLength = 0
 
 function Write-WinSetupProgressLine {
     param([string]$Message)
+    $pad = if ($script:WinSetupProgressLength -gt 0 -and $Message.Length -lt $script:WinSetupProgressLength) {
+        ' ' * ($script:WinSetupProgressLength - $Message.Length)
+    } else { '' }
     try {
-        if ($script:WinSetupProgressLength -eq 0) {
-            [Console]::WriteLine($Message)
-        } else {
-            $pad = if ($Message.Length -lt $script:WinSetupProgressLength) {
-                ' ' * ($script:WinSetupProgressLength - $Message.Length)
-            } else { '' }
-            [Console]::Write("`r$Message$pad")
-        }
+        [Console]::Write("`r$Message$pad")
     } catch {
-        Write-Host $Message -ForegroundColor DarkGray
+        Write-Host $Message -ForegroundColor DarkGray -NoNewline
     }
     $script:WinSetupProgressLength = $Message.Length
 }
@@ -35,10 +31,7 @@ function Clear-WinSetupProgressLine {
     if ($script:WinSetupProgressLength -eq 0) { return }
     try {
         [Console]::Write("`r$(' ' * $script:WinSetupProgressLength)`r")
-        [Console]::WriteLine('')
-    } catch {
-        Write-Host ''
-    }
+    } catch { }
     $script:WinSetupProgressLength = 0
 }
 

@@ -11,27 +11,30 @@ if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
 }
 
 $ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
 $ReleaseBaseUrl = 'https://github.com/Leviatan1121/WinSetup/releases/latest/download'
 $script:WinSetupProgressLength = 0
 
 function Write-WinSetupProgressLine {
     param([string]$Message)
-    $pad = if ($script:WinSetupProgressLength -gt 0 -and $Message.Length -lt $script:WinSetupProgressLength) {
-        ' ' * ($script:WinSetupProgressLength - $Message.Length)
-    } else { '' }
-    try {
-        [Console]::Write("`r$Message$pad")
-    } catch {
-        Write-Host $Message -ForegroundColor DarkGray -NoNewline
-    }
-    $script:WinSetupProgressLength = $Message.Length
+    $width = [Math]::Max($Message.Length, $script:WinSetupProgressLength)
+    $pad = ' ' * ($width - $Message.Length)
+    Write-Host "`r$Message$pad" -NoNewline -ForegroundColor DarkGray
+    $script:WinSetupProgressLength = $width
 }
 
-function Clear-WinSetupProgressLine {
-    if ($script:WinSetupProgressLength -eq 0) { return }
-    try {
-        [Console]::Write("`r$(' ' * $script:WinSetupProgressLength)`r")
-    } catch { }
+function Complete-WinSetupProgressLine {
+    param(
+        [string]$Message,
+        [ConsoleColor]$Color = [ConsoleColor]::Green
+    )
+    if ($script:WinSetupProgressLength -gt 0) {
+        $width = [Math]::Max($Message.Length, $script:WinSetupProgressLength)
+        $pad = ' ' * ($width - $Message.Length)
+        Write-Host "`r$Message$pad" -ForegroundColor $Color
+    } else {
+        Write-Host $Message -ForegroundColor $Color
+    }
     $script:WinSetupProgressLength = 0
 }
 
@@ -138,7 +141,13 @@ function Save-WinSetupReleaseFile {
         [string]$Destination
     )
 
-    Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
+    } finally {
+        $ProgressPreference = $prevProgress
+    }
 }
 
 function Get-WinSetupPauserMarkerPath {
@@ -166,6 +175,7 @@ function Invoke-WinSetupPauser {
     $pauserUrl = 'https://github.com/Leviatan1121/WindowsUpdatePauser/releases/latest/download/WindowsUpdatePauser.bat'
     $pauserPath = Join-Path $Dir 'WindowsUpdatePauser.bat'
 
+    $script:WinSetupProgressLength = 0
     Write-WinSetupProgressLine '[*] Downloading Windows Update Pauser...'
     Save-WinSetupReleaseFile -Uri $pauserUrl -Destination $pauserPath
 
@@ -298,6 +308,7 @@ function Save-WinSetupReleaseAssets {
     $downloaded = 0
     $failed = 0
     $skipped = 0
+    $script:WinSetupProgressLength = 0
 
     foreach ($file in (Get-WinSetupReleaseAssets)) {
         $dest = Join-Path $Dir $file
@@ -318,7 +329,7 @@ function Save-WinSetupReleaseAssets {
             Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/$file" -Destination $dest
             $downloaded++
         } catch {
-            Write-Host ''
+            $script:WinSetupProgressLength = 0
             Write-Warning "Failed to download ${file}: $($_.Exception.Message)"
             $failed++
         }
@@ -454,14 +465,16 @@ foreach ($step in $steps) {
     }
 
     if ($step.Id -eq 'Pauser') {
-        Clear-WinSetupProgressLine
-        Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
-    } elseif ($step.Id -eq 'Download' -and $downloadStats) {
-        Clear-WinSetupProgressLine
-        if ($downloadStats.Failed -gt 0) {
-            Write-Host "[~] Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed (exit $exitCode)." -ForegroundColor Yellow
+        if ($exitCode -eq 0) {
+            Complete-WinSetupProgressLine -Message "[+] $($step.Label) completed (exit $exitCode)."
         } else {
-            Write-Host "[+] Downloaded $($downloadStats.Downloaded) assets (exit $exitCode)." -ForegroundColor Green
+            Complete-WinSetupProgressLine -Message "$($step.Label) finished with exit code $exitCode." -Color Yellow
+        }
+    } elseif ($step.Id -eq 'Download' -and $downloadStats) {
+        if ($downloadStats.Failed -gt 0) {
+            Complete-WinSetupProgressLine -Message "[~] Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed (exit $exitCode)." -Color Yellow
+        } else {
+            Complete-WinSetupProgressLine -Message "[+] Downloaded $($downloadStats.Downloaded) assets (exit $exitCode)."
         }
     } else {
         Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode

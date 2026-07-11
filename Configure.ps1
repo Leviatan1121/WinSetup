@@ -1,10 +1,5 @@
-# WinSetup — user-level appearance, shell, and power settings (HKCU).
-# Maps to Settings pages where noted. Requires no elevation.
-# Run order: WinSetup.ps1 → Configure.ps1 → Privacy.ps1 → Performance.ps1 → Debloat.ps1
-# Visual effects (sysdm.cpl + Accessibility) live in Performance.ps1.
-
 #region Accessibility > Mouse pointer and motion
-# Pointer size 3 only. Color: WinSetup.ps1 registers post-reboot Settings prompt at the very end.
+Write-Host '[*] Mouse pointer and motion...' -ForegroundColor DarkGray
 $accessibilityPath = 'HKCU:\Software\Microsoft\Accessibility'
 $cursorsPath = 'HKCU:\Control Panel\Cursors'
 if (-not (Test-Path $accessibilityPath)) { New-Item -Path $accessibilityPath -Force | Out-Null }
@@ -41,48 +36,41 @@ if (Test-Path $promptInstaller) {
 #endregion
 
 #region Personalization > Themes > Dark theme
+Write-Host '[*] Dark theme...' -ForegroundColor DarkGray
 Start-Process -FilePath "C:\Windows\Resources\Themes\dark.theme" -Wait
 Start-Sleep -Seconds 3
 Get-Process -Name "SystemSettings" -ErrorAction SilentlyContinue | Stop-Process -Force
 #endregion
 
 #region System > Developer options > End Task
-# Right-click taskbar → End task (developer setting).
+Write-Host '[*] Taskbar End task...' -ForegroundColor DarkGray
 $TaskbarDevPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"
 if (-not (Test-Path $TaskbarDevPath)) { New-Item -Path $TaskbarDevPath -Force | Out-Null }
 Set-ItemProperty -Path $TaskbarDevPath -Name "TaskbarEndTask" -Value 1 -Type DWord
 #endregion
 
 #region Multitasking > Alt + Tab
-# Value 3 = open windows only (no browser tabs as separate entries).
+Write-Host '[*] Alt+Tab: open windows only...' -ForegroundColor DarkGray
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "MultiTaskingAltTabFilter" -Value 3
 #endregion
 
 #region File Explorer > View and navigation
+Write-Host '[*] File Explorer view and navigation...' -ForegroundColor DarkGray
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-# Show file extensions, show hidden files, open to This PC.
 Set-ItemProperty -Path $ExplorerPath -Name "HideFileExt" -Value 0 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "Hidden" -Value 1 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "LaunchTo" -Value 1 -Type DWord
 
-# Unpin Home and Gallery from the navigation pane.
 foreach ($clsid in @(
-    '{f874310e-b6b7-47dc-bc84-b9e6b38f5903}', # Home (Inicio)
-    '{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}'  # Gallery (Galería)
+    '{f874310e-b6b7-47dc-bc84-b9e6b38f5903}',
+    '{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}'
 )) {
     $clsidPath = "HKCU:\Software\Classes\CLSID\$clsid"
     if (-not (Test-Path $clsidPath)) { New-Item -Path $clsidPath -Force | Out-Null }
     Set-ItemProperty -Path $clsidPath -Name 'System.IsPinnedToNameSpaceTree' -Value 0 -Type DWord
 }
-# Remove legacy shell folders from the user profile (Contacts, Favorites, etc.).
 $userDirectory = "$env:USERPROFILE\"
-$unusedFolders = @(
-    'Contacts',
-    'Favorites',
-    'Links',
-    'Saved Games',
-    'Searches'
-)
+$unusedFolders = @('Contacts', 'Favorites', 'Links', 'Saved Games', 'Searches')
 foreach ($folder in $unusedFolders) {
     $folderPath = Join-Path $userDirectory $folder
     if (Test-Path $folderPath) {
@@ -92,7 +80,7 @@ foreach ($folder in $unusedFolders) {
 #endregion
 
 #region Taskbar > Search, grouping, and auto-hide
-# Hide the taskbar search box and disable Bing/Cortana integration in search.
+Write-Host '[*] Taskbar search, grouping, auto-hide...' -ForegroundColor DarkGray
 $SearchPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"
 if (-not (Test-Path $SearchPath)) { New-Item -Path $SearchPath -Force | Out-Null }
 Set-ItemProperty -Path $SearchPath -Name "SearchboxTaskbarMode" -Value 0 -Type DWord
@@ -102,11 +90,9 @@ Set-ItemProperty -Path $SearchPath -Name "CortanaConsent" -Value 0 -Type DWord
 Set-ItemProperty -Path $SearchPath -Name "AllowSearchToUseLocation" -Value 0 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "IsEnabled" -Value 0 -Type DWord
 
-# Multi-monitor: app icons only on the taskbar where the window is open
 Set-ItemProperty -Path $ExplorerPath -Name "MMTaskbarEnabled" -Value 1 -Type DWord
 Set-ItemProperty -Path $ExplorerPath -Name "MMTaskbarMode" -Value 2 -Type DWord
 
-# Auto-hide taskbar (StuckRects3 byte 8: 2=visible, 3=auto-hide)
 $explorerKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'
 $stuckRects = Join-Path $explorerKey 'StuckRects3'
 if (Test-Path $stuckRects) {
@@ -127,22 +113,20 @@ if (Test-Path $mmStuckRects) {
             }
         }
 }
-
 #endregion
 
 #region Start > Layout and recommendations
-# HKCU preferences only — avoid Policies/* keys (they mark Settings as organization-managed).
+Write-Host '[*] Start layout and recommendations...' -ForegroundColor DarkGray
 $startPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Start'
 if (-not (Test-Path $startPath)) { New-Item -Path $startPath -Force | Out-Null }
 Set-ItemProperty -Path $startPath -Name 'AllAppsViewMode' -Value 1 -Type DWord
 Set-ItemProperty -Path $startPath -Name 'ShowRecentList' -Value 0 -Type DWord
 Set-ItemProperty -Path $startPath -Name 'ShowFrequentList' -Value 0 -Type DWord
 
-# Folders next to power button: Settings, File Explorer, Personal folder
 $visiblePlaces = @(
-    [guid]'52730886-51AA-4243-9F7B-2776584659D4' # Settings
-    [guid]'148A24BC-D60C-4289-A080-6ED9BBA24882' # File Explorer
-    [guid]'74BDB04A-F94A-4F68-8BD6-4398071DA8BC' # Personal folder
+    [guid]'52730886-51AA-4243-9F7B-2776584659D4',
+    [guid]'148A24BC-D60C-4289-A080-6ED9BBA24882',
+    [guid]'74BDB04A-F94A-4F68-8BD6-4398071DA8BC'
 )
 $visiblePlacesBytes = New-Object byte[] ($visiblePlaces.Count * 16)
 for ($i = 0; $i -lt $visiblePlaces.Count; $i++) {
@@ -168,16 +152,14 @@ foreach ($name in @(
     Set-ItemProperty -Path $contentDelivery -Name $name -Value 0 -Type DWord -ErrorAction SilentlyContinue
 }
 
-# Local search only: disable cloud/Bing results in Start Menu
 $searchSettings = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings'
 if (-not (Test-Path $searchSettings)) { New-Item -Path $searchSettings -Force | Out-Null }
 Set-ItemProperty -Path $searchSettings -Name 'IsMSACloudSearchEnabled' -Value 0 -Type DWord
 Set-ItemProperty -Path $searchSettings -Name 'IsAADCloudSearchEnabled' -Value 0 -Type DWord
-# Empty start2.bin for all profiles is applied in Debloat.ps1 (elevated).
 #endregion
 
 #region System > Power > Screen and sleep
-# Display off after 3 minutes; sleep disabled on AC and battery.
+Write-Host '[*] Power: display timeout, sleep off...' -ForegroundColor DarkGray
 powercfg /change monitor-timeout-ac 3 | Out-Null
 powercfg /change monitor-timeout-dc 3 | Out-Null
 powercfg /change standby-timeout-ac 0 | Out-Null

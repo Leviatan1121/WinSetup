@@ -1,7 +1,3 @@
-# WinSetup — system-wide removals, policies, and elevated privacy (HKLM + all users).
-# Self-elevates when run alone (AllowFile.bat); WinSetup.ps1 calls with -WinSetupElevated (no extra UAC).
-# Run order: WinSetup.ps1 → Configure → Privacy → Performance → Debloat → pointer hooks
-
 param([switch]$WinSetupElevated)
 
 . (Join-Path $PSScriptRoot 'WinSetup-WingetHelpers.ps1')
@@ -28,16 +24,14 @@ if ($WinSetupElevated) {
 #endregion
 
 #region System > Power > Fast startup
-# Disable hiberboot (fast startup) — avoids stale driver/state issues on some hardware.
+Write-Host '[*] Disabling fast startup...' -ForegroundColor DarkGray
 Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -Value 0 -Type DWord
 #endregion
 
 #region Privacy > Location (elevated)
-# Turns OFF device location services and suppresses location prompts system-wide.
-# Privacy.ps1 handles per-user HKCU consent; this section handles HKLM + CAM cache.
+Write-Host '[*] Disabling system location...' -ForegroundColor DarkGray
 $adminFlows = Join-Path $env:WINDIR 'System32\SystemSettingsAdminFlows.exe'
 if (Test-Path $adminFlows) {
-    # Toggle 1→0 forces CAM to register the global OFF state (visible in Procmon on 24H2+).
     & $adminFlows SetCamSystemGlobal location 1 | Out-Null
     Start-Sleep -Milliseconds 400
     & $adminFlows SetCamSystemGlobal location 0 | Out-Null
@@ -46,12 +40,10 @@ if (Test-Path $adminFlows) {
     & $adminFlows SetGeolocationMaster 0 | Out-Null
 }
 
-# Group Policy: Turn off location scripting / sensors.
 $locationPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'
 if (-not (Test-Path $locationPolicy)) { New-Item -Path $locationPolicy -Force | Out-Null }
 Set-ItemProperty -Path $locationPolicy -Name 'DisableLocation' -Value 1 -Type DWord
 
-# Machine-wide consent store (Settings reads HKLM on elevated toggles).
 $locationHklm = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
 if (-not (Test-Path $locationHklm)) { New-Item -Path $locationHklm -Force | Out-Null }
 Set-ItemProperty -Path $locationHklm -Name 'Value' -Value 'Deny' -Type String
@@ -62,8 +54,6 @@ if (-not (Test-Path $locationNonPackagedHklm)) { New-Item -Path $locationNonPack
 Set-ItemProperty -Path $locationNonPackagedHklm -Name 'Value' -Value 'Deny' -Type String
 Set-ItemProperty -Path $locationNonPackagedHklm -Name 'ShowGlobalPrompts' -Value 0 -Type DWord
 
-# Pulse ShowGlobalPrompts 1→0 so CapabilityConsentStorage.db rebuilds with notify=OFF on 26200+.
-# HKCU consent values are set in Privacy.ps1; this section only refreshes the CAM cache.
 $locationConsentParentHkcu = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore'
 $locationHkcu = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
 $locationNonPackagedHkcu = Join-Path $locationHkcu 'NonPackaged'
@@ -75,7 +65,6 @@ foreach ($promptPath in @($locationConsentParentHkcu, $locationHkcu, $locationNo
     Set-ItemProperty -Path $promptPath -Name 'ShowGlobalPrompts' -Value 0 -Type DWord -ErrorAction SilentlyContinue
 }
 
-# Delete CAM SQLite caches; camsvc/lfsvc recreate them from registry on next start.
 $camDbDir = Join-Path $env:ProgramData 'Microsoft\Windows\CapabilityAccessManager'
 foreach ($svc in @('lfsvc', 'camsvc')) {
     Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
@@ -93,7 +82,7 @@ Get-Process -Name 'SystemSettings' -ErrorAction SilentlyContinue | Stop-Process 
 #endregion
 
 #region Personalization > Taskbar > Widgets
-# Hide widgets on the taskbar and remove the Web Experience Pack (News and interests).
+Write-Host '[*] Removing taskbar widgets...' -ForegroundColor DarkGray
 $ExplorerPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 Set-ItemProperty -Path $ExplorerPath -Name "TaskbarDa" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
@@ -125,6 +114,7 @@ Invoke-WinSetupWingetUninstall --name "Widgets Platform Runtime" --silent --acce
 #endregion
 
 #region Copilot, Recall, and integrated AI
+Write-Host '[*] Removing Copilot, Recall, and integrated AI...' -ForegroundColor DarkGray
 $aiScriptPath = Join-Path $PSScriptRoot 'WinSetup-AI-UpdateCleanup.ps1'
 if (Test-Path -LiteralPath $aiScriptPath) {
     try {
@@ -139,7 +129,7 @@ if (Test-Path -LiteralPath $aiScriptPath) {
 #endregion
 
 #region OneDrive
-# Stop sync client, uninstall all channels, and block reinstall via policy.
+Write-Host '[*] Removing OneDrive...' -ForegroundColor DarkGray
 Get-Process -Name OneDrive -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Invoke-WinSetupWingetUninstall --name "Microsoft OneDrive" --silent --accept-source-agreements --disable-interactivity
@@ -174,7 +164,6 @@ Remove-Item -Path "$env:USERPROFILE\OneDrive" -Recurse -Force -ErrorAction Silen
 #region Built-in apps > Removal helpers
 function Remove-BuiltInApps {
     param([string[]]$PackageNames)
-    # Installed (all users + current), then provisioned image packages.
     foreach ($name in $PackageNames) {
         Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq $name -or $_.Name -like "$name*" } |
@@ -192,7 +181,6 @@ function Remove-BuiltInApps {
 
 function Remove-AppsByPattern {
     param([string[]]$Patterns)
-    # Wildcard match on Name / PackageFullName across all removal channels.
     foreach ($pattern in $Patterns) {
         Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } |
@@ -237,7 +225,6 @@ function Remove-PythonAppExecutionAliases {
 
 function Uninstall-Win32AppByName {
     param([string]$DisplayNamePattern)
-    # Walk Uninstall registry keys and run each matching Quiet uninstall string.
     $uninstallRoots = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -257,43 +244,36 @@ function Uninstall-Win32AppByName {
 #endregion
 
 #region Built-in apps > Xbox ecosystem (intentionally kept)
-# Win+G (Game Bar), Xbox Live sign-in (Steam + Xbox titles), optional Game Pass.
-# These MSIX packages are visible in winget list but often not in Control Panel — keep all:
-#   Microsoft.XboxGamingOverlay      Game Bar (Win+G overlay)
-#   Microsoft.GamingApp              Xbox app / Game Pass library
-#   Microsoft.XboxIdentityProvider     Xbox Live authentication
-#   Microsoft.Xbox.TCUI                In-game purchase / subscription UI
-#   Microsoft.GamingServices           Xbox Live runtime (service package, if present)
+Write-Host '[*] Xbox apps: kept (Game Bar, Xbox Live).' -ForegroundColor DarkGray
 #endregion
 
 #region Built-in apps > Package list
-# Remove provisioned + installed Appx for each package name (current user and all users).
+Write-Host '[*] Removing built-in apps...' -ForegroundColor DarkGray
 Remove-BuiltInApps @(
-    'Microsoft.WindowsFeedbackHub'           # Feedback Hub
-    'Microsoft.BingWeather'                  # Weather
-    'Microsoft.YourPhone'                    # Phone Link
-    'MicrosoftCorporationII.MicrosoftFamily' # Family Safety
-    'Microsoft.Getstarted'                   # Get Started
-    'Microsoft.StartExperiencesApp'          # Start Experiences (Get Started on newer builds)
-    'Microsoft.MicrosoftJournal'             # Journal
-    'Microsoft.MicrosoftOfficeHub'           # Microsoft 365 Copilot
-    'Clipchamp.Clipchamp'                    # Clipchamp
-    'MicrosoftTeams'                         # Teams (legacy package)
-    'MSTeams'                                # Teams (current package)
-    'Microsoft.Teams'                        # Teams (alternate package)
-    'Microsoft.Todos'                        # To Do
-    'Microsoft.Whiteboard'                   # Whiteboard
-    'Microsoft.MicrosoftStickyNotes'       # Sticky Notes
-    'Microsoft.BingNews'                     # News
-    'Microsoft.BingSearch'                   # Bing in Start/search (no Start tile; winget-only visibility)
-    'Microsoft.Windows.DevHome'              # Dev Home
-    'Microsoft.PowerAutomateDesktop'         # Power Automate Desktop
-    'Microsoft.OutlookForWindows'            # Outlook
-    'Microsoft.OneConnect'                   # Mobile Plans
-    'Microsoft.MicrosoftSolitaireCollection' # Solitaire Collection
+    'Microsoft.WindowsFeedbackHub',
+    'Microsoft.BingWeather',
+    'Microsoft.YourPhone',
+    'MicrosoftCorporationII.MicrosoftFamily',
+    'Microsoft.Getstarted',
+    'Microsoft.StartExperiencesApp',
+    'Microsoft.MicrosoftJournal',
+    'Microsoft.MicrosoftOfficeHub',
+    'Clipchamp.Clipchamp',
+    'MicrosoftTeams',
+    'MSTeams',
+    'Microsoft.Teams',
+    'Microsoft.Todos',
+    'Microsoft.Whiteboard',
+    'Microsoft.MicrosoftStickyNotes',
+    'Microsoft.BingNews',
+    'Microsoft.BingSearch',
+    'Microsoft.Windows.DevHome',
+    'Microsoft.PowerAutomateDesktop',
+    'Microsoft.OutlookForWindows',
+    'Microsoft.OneConnect',
+    'Microsoft.MicrosoftSolitaireCollection'
 )
 
-# WhatsApp (Store, Win32 installer, or winget)
 Get-Process -Name 'WhatsApp', 'WhatsAppDesktop' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-AppsByPattern @('*WhatsApp*', '*5319275A*')
 Uninstall-Win32AppByName '*WhatsApp*'
@@ -302,7 +282,6 @@ Invoke-WinSetupWingetUninstall --id 5319275A.WhatsAppDesktop --silent --accept-s
 Invoke-WinSetupWingetUninstall --id 9NKSQGP7F2NH --silent --accept-source-agreements --disable-interactivity
 Invoke-WinSetupWingetUninstall --id WhatsApp.WhatsApp --silent --accept-source-agreements --disable-interactivity
 
-# MSIX-only packages (winget list / Get-AppxPackage; not in Control Panel).
 Invoke-WinSetupWingetUninstall --id 9NZBF4GT040C --silent --accept-source-agreements --disable-interactivity
 Invoke-WinSetupWingetUninstall --name "Microsoft Bing" --silent --accept-source-agreements --disable-interactivity
 Invoke-WinSetupWingetUninstall --name "Dev Home" --silent --accept-source-agreements --disable-interactivity
@@ -311,7 +290,7 @@ Invoke-WinSetupWingetUninstall --name "Power Automate" --silent --accept-source-
 #endregion
 
 #region Taskbar > Unpin all apps (all profiles)
-# Clears Quick Launch .lnk pins and Taskband registry for Default + every local user profile.
+Write-Host '[*] Unpinning taskbar apps (all profiles)...' -ForegroundColor DarkGray
 $userProfiles = @('C:\Users\Default') + (
     Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
@@ -344,7 +323,7 @@ foreach ($profileRoot in $userProfiles) {
 #endregion
 
 #region Start > Layout (all profiles)
-# Empty start2.bin for Default and every user — layout only; HKCU prefs are in Configure.ps1.
+Write-Host '[*] Resetting Start layout (all profiles)...' -ForegroundColor DarkGray
 $emptyStartLayout = [Convert]::FromBase64String(@'
 4nrhSwH8TRucAIEL3m5RhU5aX0cAW7FJilySr5CE+V6aoBj7A+HZAaADAABc9u55LN8F4borYyXEGl8Q5+RZ+qERszeqUhhZXDvcjTF6rgdprauITLqPgMVMbSZbRsLN/O5uMjSLEr6nWYIwsMJkZMnZyZrhR3PugUhUKOYDqwySCY6/CPkL/Ooz/5j2R2hwWRGqc7ZsJxDFM1DWofjUiGjDUny+Y8UjowknQVaPYao0PC4bygKEbeZqCqRvSgPalSc53OFqCh2FHydzl09fChaos385QvF40EDEgSO8U9/dntAeNULwuuZBi7BkWSIOmWN1l4e+TZbtSJXwn+EINAJhRHyCSNeku21dsw+cMoLorMKnRmhJMLvE+CCdgNKIaPo/Krizva1+bMsI8bSkV/CxaCTLXodb/NuBYCsIHY1sTvbwSBRNMPvccw43RJCUKZRkBLkCVfW24ANbLfHXofHDMLxxFNUpBPSgzGHnueHknECcf6J4HCFBqzvSH1TjQ3S6J8tq2yaQ+jFNkxGRMushdXNNiTNjDFYMJNvgRL2lu63NPE+Cxy+IKC1NdKLweFdOGZr2mvKAw7t/fxmCTieUgLkegDomZbHL6anjy4SkjSCnfTBUNtxc0X3VJiha4wq/ArRrTtVnzcUcX+CI4BNTicx+X2eXugI+EHKjgaQS7fXHqQGEUMUeHMCXlgWUZ5kE3LFTjVifyVIGqYNDuqt7T9l7DWByiuRariySa7tiN1gA2ALKYlRsjsQL7xpxHnT1hi/9b+UuyC46cYQaDUcKDc4BGReJP2gDIyZfudLpgUPc7YfH9doiMcWimSylbKFtsI3Mfo0HONxet5XjzjDoziduYk2dFoFfz19uaRcOHtASKzaGdtk6RC+Tm4BbU/7PlbvHEKJZ720AxOQkzU9U8RWAHHsPUVfWzYoQc2dN8OQ/JlUAqe8+PI05ST4m3LoUpBKB+oU0H84aet5etGpIi4CthvazGencFObWJWNRzxk9BXIX2YoAdXB8b7JFwlxVdhgzZK0zkkrzSSmX9iJcNoi6Tp+RtnljzLTAv6xh8gwytIW5F2e5sVh7aiqo4sji0aE+ToqyNPV7eE9Idi2ZNeEbnJ9LX127uOl5jB280hs0caXLUrYiR15+Y31wtlD8JVeTDxDDac6v+e3C4VX+28mg9bYQ7NGYXZc7yZANC/nWTn+/hkTZUvR0gi+PUz4o/DSdKzbvVCAlqdjArcKkWW4r/WKUSLskoOKRPxdNLPVBl2S6blje4LvBzulpeHWubXWfCW4ILuOI
 '@)
@@ -363,7 +342,7 @@ Get-ChildItem -Path 'C:\Users\*\AppData\Local\Packages\Microsoft.Windows.StartMe
 #endregion
 
 #region Search > Disable web results (system-wide)
-# HKLM policies: no Bing/cloud results in Start or taskbar search.
+Write-Host '[*] Disabling web search results...' -ForegroundColor DarkGray
 $searchPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'
 if (-not (Test-Path $searchPolicy)) { New-Item -Path $searchPolicy -Force | Out-Null }
 Set-ItemProperty -Path $searchPolicy -Name 'ConnectedSearchUseWeb' -Value 0 -Type DWord
@@ -376,7 +355,7 @@ Set-ItemProperty -Path $explorerPolicy -Name 'DisableSearchBoxSuggestions' -Valu
 #endregion
 
 #region Apps > Disable consumer experience and Spotlight
-# Blocks suggested Store apps, lock screen Spotlight, and related cloud content.
+Write-Host '[*] Disabling consumer experience and Spotlight...' -ForegroundColor DarkGray
 $cloudContentPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
 if (-not (Test-Path $cloudContentPolicy)) { New-Item -Path $cloudContentPolicy -Force | Out-Null }
 Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableWindowsConsumerFeatures' -Value 1 -Type DWord
@@ -387,8 +366,7 @@ Set-ItemProperty -Path $cloudContentPolicy -Name 'DisableThirdPartySuggestions' 
 #endregion
 
 #region Apps > Disable Microsoft Store Python execution aliases
-# Removes python.exe / python3.exe reparse points that hijack `python` to the Store.
-# Needed so real Python installs (e.g. mise) win on PATH.
+Write-Host '[*] Disabling Store Python aliases...' -ForegroundColor DarkGray
 $pythonAliasProfiles = @('C:\Users\Default') + (
     Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
@@ -401,6 +379,7 @@ foreach ($profileRoot in $pythonAliasProfiles) {
 #endregion
 
 #region Privacy > Diagnostic data and telemetry (HKLM)
+Write-Host '[*] Reducing telemetry (HKLM)...' -ForegroundColor DarkGray
 foreach ($dataCollectionPath in @(
     'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection',
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection'
@@ -427,7 +406,7 @@ foreach ($telemetrySvc in @('DiagTrack', 'dmwappushservice')) {
 #endregion
 
 #region Windows Update > Delivery Optimization
-# HTTP-only downloads; no peer caching or upload to other PCs.
+Write-Host '[*] Disabling Delivery Optimization peer cache...' -ForegroundColor DarkGray
 $deliveryOptimization = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization'
 if (-not (Test-Path $deliveryOptimization)) { New-Item -Path $deliveryOptimization -Force | Out-Null }
 Set-ItemProperty -Path $deliveryOptimization -Name 'DODownloadMode' -Value 0 -Type DWord
@@ -446,7 +425,7 @@ Write-Host "[!] Debloat apps applied successfully." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 
 #region Shell > Restart Explorer
-# Apply taskbar, Start, and pin changes without a full reboot.
+Write-Host '[*] Restarting Explorer...' -ForegroundColor DarkGray
 Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
 Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3

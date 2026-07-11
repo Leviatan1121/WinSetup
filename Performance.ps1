@@ -1,11 +1,8 @@
-# WinSetup — visual performance preset (sysdm.cpl + Accessibility > Visual effects).
-# HKCU by default; -SystemOnly for HKLM tweaks (called from WinSetup.ps1 elevated child).
-# Run order: WinSetup.ps1 → Configure → Privacy → Performance (user) → Performance -SystemOnly → pointer hooks
-
 param([switch]$SystemOnly)
 
 #region Performance Options > Advanced > Processor scheduling and MMCSS (HKLM)
 if ($SystemOnly) {
+    Write-Host '[*] System performance (processor scheduling, Game DVR policy)...' -ForegroundColor DarkGray
     $priorityPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl'
     $mmcssPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
     $gameDvrPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR'
@@ -23,13 +20,6 @@ if ($SystemOnly) {
 }
 #endregion
 
-# Usage: AllowFile.bat .\Performance.ps1
-#
-# sysdm.cpl: custom preset — best performance + Explorer thumbnails + ClearType.
-# Accessibility: Animation effects OFF, Transparency effects OFF.
-# Gaming: background DVR + Game Mode OFF (OBS workflow); Win+G Game Bar overlay kept.
-# After running: sign out and back in (or reboot) before verifying in sysdm.cpl.
-
 #region Paths
 $visualEffectsPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
 $desktopPath = 'HKCU:\Control Panel\Desktop'
@@ -41,8 +31,9 @@ if (-not (Test-Path $visualEffectsPath)) { New-Item -Path $visualEffectsPath -Fo
 if (-not (Test-Path $dwmPath)) { New-Item -Path $dwmPath -Force | Out-Null }
 #endregion
 
+Write-Host '[*] Applying visual performance preset...' -ForegroundColor DarkGray
+
 #region Performance Options > Step 1: Best performance baseline
-# Official "Adjust for best performance" — resets the preset before custom tweaks.
 Set-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 2 -Type DWord
 $bestPerfMask = [byte[]](0x9E, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)
 Set-ItemProperty -Path $desktopPath -Name 'UserPreferencesMask' -Type Binary -Value $bestPerfMask
@@ -50,12 +41,8 @@ Set-ItemProperty -Path $metricsPath -Name 'MinAnimate' -Value '0' -Type String
 #endregion
 
 #region Accessibility > Visual effects
-# Settings: ms-settings:easeofaccess-visualeffects
-
-# Transparency effects → Off (also listed under Personalization > Colors on some builds)
 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'EnableTransparency' -Value 0 -Type DWord
 
-# Animation effects → Off (UserPreferencesMask bytes 0, 1, 4 + MinAnimate; user capture on Win11)
 $mask = (Get-ItemProperty -Path $desktopPath).UserPreferencesMask.Clone()
 $mask[0] = $mask[0] -band (-bnot 0x0E)
 $mask[1] = $mask[1] -band (-bnot 0x0C)
@@ -81,7 +68,6 @@ Set-ItemProperty -Path $desktopPath -Name 'FontSmoothingType' -Value 2 -Type DWo
 #endregion
 
 #region Performance Options > Step 4: Custom mask (only font-smoothing bit added to perf+anim-off base)
-# Expected: 90 12 03 80 10 02 00 00 (or 90 12 07 80 10 02 if byte2 differs on this profile).
 $mask = (Get-ItemProperty -Path $desktopPath).UserPreferencesMask.Clone()
 $mask[5] = 0x02
 Set-ItemProperty -Path $desktopPath -Name 'UserPreferencesMask' -Type Binary -Value $mask
@@ -89,8 +75,7 @@ Set-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -Type
 #endregion
 
 #region Gaming > Game DVR, Game Mode (HKCU); Game Bar overlay (Win+G) kept
-# Background capture + Game Mode OFF for OBS + Discord + VTube Studio.
-# Do not disable UseNexusForGameBarEnabled — Win+G overlay stays available.
+Write-Host '[*] Gaming: DVR and Game Mode off (Game Bar kept)...' -ForegroundColor DarkGray
 $gameConfigStore = 'HKCU:\System\GameConfigStore'
 if (-not (Test-Path $gameConfigStore)) { New-Item -Path $gameConfigStore -Force | Out-Null }
 Set-ItemProperty -Path $gameConfigStore -Name 'GameDVR_Enabled' -Value 0 -Type DWord
@@ -129,7 +114,5 @@ $nullResult = [UIntPtr]::Zero
     [IntPtr]0xFFFF, 0x001A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$nullResult)
 #endregion
 
-#region Report
 Write-Host '[+] Performance (user) applied.' -ForegroundColor Green
 exit 0
-#endregion

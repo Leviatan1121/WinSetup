@@ -1,7 +1,3 @@
-# WinSetup — optional removal of Quick Assist and Remote Desktop Connection.
-# Self-elevates when run alone (AllowFile.bat); WinSetup.ps1 calls with -WinSetupElevated (no extra UAC).
-# Order: Quick Assist first, then Remote Desktop Connection (last — may prompt restart).
-
 param([switch]$WinSetupElevated)
 
 #region Elevation
@@ -39,6 +35,7 @@ function Confirm-OptionalUninstall {
 }
 
 #region Quick Assist
+Write-Host '[*] Quick Assist (optional uninstall)...' -ForegroundColor DarkGray
 $quickAssistInstalled = @(
     Get-AppxPackage -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
     Get-AppxPackage -AllUsers -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue
@@ -51,6 +48,7 @@ if (-not $quickAssistInstalled) {
 }
 
 if ($quickAssistInstalled -and (Confirm-OptionalUninstall -AppName 'Quick Assist')) {
+    Write-Host '[*] Removing Quick Assist...' -ForegroundColor DarkGray
     foreach ($name in @('MicrosoftCorporationII.QuickAssist')) {
         Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq $name -or $_.Name -like "$name*" } |
@@ -66,13 +64,25 @@ if ($quickAssistInstalled -and (Confirm-OptionalUninstall -AppName 'Quick Assist
     Get-WindowsCapability -Online -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'App.Support.QuickAssist*' -and $_.State -eq 'Installed' } |
         ForEach-Object { Remove-WindowsCapability -Online -Name $_.Name -ErrorAction SilentlyContinue | Out-Null }
+    Write-Host '[+] Quick Assist removed.' -ForegroundColor Green
+} elseif ($quickAssistInstalled) {
+    Write-Host '[~] Quick Assist kept.' -ForegroundColor DarkGray
+} else {
+    Write-Host '[~] Quick Assist not installed.' -ForegroundColor DarkGray
 }
 #endregion
 
 #region Remote Desktop Connection
+Write-Host '[*] Remote Desktop Connection (optional uninstall)...' -ForegroundColor DarkGray
 $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
-if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'Restart is required to finish removal — choose Restart later to stay in this session.')) {
+if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop Connection' -Note 'Restart is required to finish removal - choose Restart later to stay in this session.')) {
+    Write-Host '[*] Removing Remote Desktop Connection...' -ForegroundColor DarkGray
     Start-Process -FilePath $mstsc -ArgumentList '/uninstall' -Wait -ErrorAction SilentlyContinue
+    Write-Host '[+] Remote Desktop Connection uninstall started (reboot may be required).' -ForegroundColor Green
+} elseif (Test-Path $mstsc) {
+    Write-Host '[~] Remote Desktop Connection kept.' -ForegroundColor DarkGray
+} else {
+    Write-Host '[~] Remote Desktop Connection not installed.' -ForegroundColor DarkGray
 }
 #endregion
 

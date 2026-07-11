@@ -1,4 +1,4 @@
-# WinSetup — upgrade App Installer (winget). Elevated only; called from WinSetup.ps1.
+# WinSetup - upgrade App Installer (winget). Elevated only; called from WinSetup.ps1.
 
 $ErrorActionPreference = 'Continue'
 

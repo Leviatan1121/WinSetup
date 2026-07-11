@@ -1,5 +1,4 @@
-# WinSetup — main orchestrator. Single UAC at start; one main window; child window per script.
-# Entry: WinSetup.bat | irm | iex | .\WinSetup.ps1 (development).
+# WinSetup - main orchestrator. Single UAC at start; one main window; child window per script.
 
 param(
     [string]$OrchestratorMode,
@@ -326,7 +325,7 @@ function Get-WinSetupStepManifest {
     )
 }
 
-#region Bootstrap — single UAC handoff
+#region Bootstrap - single UAC handoff
 if (-not $ScriptDir) {
     $ScriptDir = Get-WinSetupDefaultScriptDir
 }
@@ -347,13 +346,7 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     try {
         $proc = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ArgumentList $elevArgs
         if ($proc) { exit 0 }
-    } catch [System.ComponentModel.Win32Exception] {
-        if ($_.NativeErrorCode -ne 1223) {
-            Write-Host '[~] UAC elevation failed.' -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host '[~] UAC elevation failed.' -ForegroundColor Yellow
-    }
+    } catch { }
 
     $OrchestratorMode = 'Limited'
 }
@@ -373,6 +366,7 @@ if ($orchestratorIsAdmin) {
     Write-Host '[~] Skipping: winget upgrade, Debloat, Performance (system), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
+Write-Host ''
 
 $steps = Get-WinSetupStepManifest
 $total = @($steps | Where-Object { -not ([bool]$_.RequiresAdmin -and -not $orchestratorIsAdmin) }).Count
@@ -453,5 +447,6 @@ Write-Host '=========================================================' -Foregrou
 Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
 Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow
 Write-Host '=========================================================' -ForegroundColor Yellow
+Write-Host ''
 
 Read-Host 'Press Enter to continue'

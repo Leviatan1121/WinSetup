@@ -400,6 +400,7 @@ if ($orchestratorIsAdmin) {
     Write-Host '[~] Skipping: winget upgrade, Debloat, Performance (system), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
+Write-Host ''
 
 $steps = Get-WinSetupStepManifest
 $total = @($steps | Where-Object {

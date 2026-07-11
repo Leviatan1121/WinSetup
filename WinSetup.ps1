@@ -125,8 +125,10 @@ function Add-WinSetupStepErrors {
     )
     if (-not $Messages -or $Messages.Count -eq 0) { return }
 
-    $block = @("=== $StepLabel ===") + @($Messages) + ''
-    Add-Content -LiteralPath $LogPath -Value $block -Encoding UTF8
+    if (Test-WinSetupErrorLogHasContent -Path $LogPath) {
+        Add-Content -LiteralPath $LogPath -Value '' -Encoding UTF8
+    }
+    Add-Content -LiteralPath $LogPath -Value (@("=== $StepLabel ===") + @($Messages)) -Encoding UTF8
 }
 
 function Test-WinSetupErrorLogHasContent {
@@ -321,6 +323,11 @@ function Restart-WinSetupShell {
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
     Start-Process explorer.exe
+    Start-Sleep -Seconds 1
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        @($shell.Windows()) | ForEach-Object { $_.Quit() }
+    } catch { }
 }
 
 function Get-WinSetupReleaseAssets {
@@ -557,7 +564,6 @@ if (Test-WinSetupErrorLogHasContent -Path $winSetupErrorLogPath) {
     Write-Host '[!] Baseline finished with errors.' -ForegroundColor Red
     Write-Host "    Log: $winSetupErrorLogPath" -ForegroundColor Red
     Write-Host '=========================================================' -ForegroundColor Red
-    Write-Host ''
     Get-Content -LiteralPath $winSetupErrorLogPath | ForEach-Object { Write-Host $_ -ForegroundColor Red }
     Write-Host ''
     Write-Host '[~] Reboot when ready; post-reboot prompts may still run.' -ForegroundColor DarkGray

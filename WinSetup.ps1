@@ -83,6 +83,21 @@ function Save-WinSetupReleaseFile {
     Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
 }
 
+function Get-WinSetupPauserMarkerPath {
+    param([Parameter(Mandatory = $true)][string]$Dir)
+    return Join-Path $Dir '.winsetup-pauser-done'
+}
+
+function Test-WinSetupPauserDone {
+    param([Parameter(Mandatory = $true)][string]$Dir)
+    return Test-Path -LiteralPath (Get-WinSetupPauserMarkerPath -Dir $Dir)
+}
+
+function Set-WinSetupPauserDone {
+    param([Parameter(Mandatory = $true)][string]$Dir)
+    Set-Content -LiteralPath (Get-WinSetupPauserMarkerPath -Dir $Dir) -Value (Get-Date).ToUniversalTime().ToString('o') -Force
+}
+
 function Invoke-WinSetupPauser {
     param(
         [Parameter(Mandatory = $true)]
@@ -97,65 +112,11 @@ function Invoke-WinSetupPauser {
 
     Write-Host '[*] Running Windows Update Pauser (close its window when finished)...' -ForegroundColor DarkGray
     $proc = Start-Process -FilePath $pauserPath -WorkingDirectory $Dir -Wait -PassThru
+    Set-WinSetupPauserDone -Dir $Dir
     return $proc.ExitCode
 }
 
-function Start-WinSetupLimitedTask {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Execute,
-        [string]$Arguments = '',
-        [string]$WorkingDirectory
-    )
-
-    $taskName = "WinSetup-Limited-$([guid]::NewGuid().ToString('N'))"
-    $action = New-ScheduledTaskAction -Execute $Execute -Argument $Arguments
-    if ($WorkingDirectory) {
-        $action.WorkingDirectory = $WorkingDirectory
-    }
-
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-
-    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-
-    try {
-        Write-Host '[*] Starting Limited task (interactive window)...' -ForegroundColor DarkGray
-        Start-ScheduledTask -TaskName $taskName
-
-        $deadline = (Get-Date).AddHours(2)
-        while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running' -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 300
-        }
-
-        if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
-            Write-Warning 'El proceso Limited no termino a tiempo.'
-            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-            return 1
-        }
-
-        return [int](Get-ScheduledTaskInfo -TaskName $taskName).LastTaskResult
-    }
-    finally {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    }
-}
-
-function Start-WinSetupLimitedPowerShell {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]$ArgumentList,
-        [string]$WorkingDirectory
-    )
-
-    $argLine = ($ArgumentList | ForEach-Object {
-        if ($_ -match '\s') { "`"$($_ -replace '"', '\"')`"" } else { $_ }
-    }) -join ' '
-
-    return Start-WinSetupLimitedTask -Execute 'powershell.exe' -Arguments "-NoProfile -ExecutionPolicy Bypass $argLine" -WorkingDirectory $WorkingDirectory
-}
-
-function Start-WinSetupLimitedProcess {
+function Start-WinSetupUserContextProcess {
     param(
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
@@ -164,19 +125,67 @@ function Start-WinSetupLimitedProcess {
     )
 
     if ($FilePath -like '*.ps1') {
-        $psArgs = @('-File', $FilePath) + $ArgumentList
-        return Start-WinSetupLimitedPowerShell -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory
+        $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $FilePath) + $ArgumentList
+        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
+        return $proc.ExitCode
     }
 
     if ($FilePath -like '*.bat' -or $FilePath -like '*.cmd') {
-        return Start-WinSetupLimitedTask -Execute $FilePath -WorkingDirectory $WorkingDirectory
+        $proc = Start-Process -FilePath $FilePath -WorkingDirectory $WorkingDirectory -Wait -PassThru
+        return $proc.ExitCode
     }
 
-    $argLine = ($ArgumentList | ForEach-Object {
-        if ($_ -match '\s') { "`"$($_ -replace '"', '\"')`"" } else { $_ }
-    }) -join ' '
+    $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
+    return $proc.ExitCode
+}
 
-    return Start-WinSetupLimitedTask -Execute $FilePath -Arguments $argLine -WorkingDirectory $WorkingDirectory
+function Start-WinSetupTrustLevelProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandLine,
+        [string]$WorkingDirectory
+    )
+
+    $exitFile = Join-Path $env:TEMP "WinSetup-Lim-$([guid]::NewGuid().ToString('N')).exit"
+    $cmdFile = Join-Path $env:TEMP "WinSetup-Lim-$([guid]::NewGuid().ToString('N')).cmd"
+
+    if ($WorkingDirectory) {
+        $commandBlock = @(
+            "@echo off"
+            "cd /d `"$WorkingDirectory`""
+            $CommandLine
+            "echo %ERRORLEVEL%>`"$exitFile`""
+        ) -join "`r`n"
+    } else {
+        $commandBlock = @(
+            "@echo off"
+            $CommandLine
+            "echo %ERRORLEVEL%>`"$exitFile`""
+        ) -join "`r`n"
+    }
+
+    Set-Content -LiteralPath $cmdFile -Value $commandBlock -Encoding ASCII
+
+    Write-Host '[*] Starting de-elevated process (visible window)...' -ForegroundColor DarkGray
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', "runas /trustlevel:0x20000 `"$cmdFile`"") -WindowStyle Normal | Out-Null
+
+    $deadline = (Get-Date).AddHours(2)
+    while (-not (Test-Path -LiteralPath $exitFile) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+    }
+
+    Remove-Item -LiteralPath $cmdFile -Force -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path -LiteralPath $exitFile)) {
+        Write-Warning 'El proceso de-elevado no termino a tiempo.'
+        return 1
+    }
+
+    try {
+        return [int](Get-Content -LiteralPath $exitFile -Raw)
+    } finally {
+        Remove-Item -LiteralPath $exitFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Start-WinSetupChildProcess {
@@ -207,17 +216,18 @@ function Start-WinSetupChildProcess {
     }
 
     if ($OrchestratorIsAdmin) {
-        return Start-WinSetupLimitedProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+        if ($TargetPath -like '*WingetRestorePinning.ps1') {
+            $argLine = ($ArgumentList | ForEach-Object {
+                if ($_ -match '\s') { "`"$($_ -replace '"', '\"')`"" } else { $_ }
+            }) -join ' '
+            $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$TargetPath`" $argLine"
+            return Start-WinSetupTrustLevelProcess -CommandLine $command -WorkingDirectory $WorkingDirectory
+        }
+
+        return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
     }
 
-    if ($TargetPath -like '*.ps1') {
-        $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $TargetPath) + $ArgumentList
-        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
-        return $proc.ExitCode
-    }
-
-    $proc = Start-Process -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
-    return $proc.ExitCode
+    return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -304,7 +314,7 @@ if (-not $ScriptDir) {
 if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     New-Item -ItemType Directory -Path $ScriptDir -Force | Out-Null
 
-    if (-not $PauserAlreadyDone) {
+    if (-not (Test-WinSetupPauserDone -Dir $ScriptDir)) {
         Write-Host '=========================================================' -ForegroundColor Cyan
         Write-Host '[!] Windows Update Pauser (before UAC)' -ForegroundColor Cyan
         Write-Host '=========================================================' -ForegroundColor Cyan
@@ -314,8 +324,11 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
         } else {
             Write-Host '[+] Windows Update Pauser completed.' -ForegroundColor Green
         }
-        $PauserAlreadyDone = $true
+    } else {
+        Write-Host '[*] Windows Update Pauser already done in this session.' -ForegroundColor DarkGray
     }
+
+    $PauserAlreadyDone = $true
 
     $entryScript = Get-WinSetupEntryScriptPath -Dir $ScriptDir
 
@@ -377,7 +390,7 @@ foreach ($step in $steps) {
         continue
     }
 
-    if ($step.Id -eq 'Pauser' -and $PauserAlreadyDone) {
+    if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir -or $PauserAlreadyDone -or $orchestratorIsAdmin)) {
         Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Omitido'
         Write-Host '[~] Ya ejecutado antes del UAC.' -ForegroundColor DarkGray
         Write-WinSetupStepResult -Label $step.Label -ExitCode 0

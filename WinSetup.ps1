@@ -3,8 +3,7 @@
 
 param(
     [string]$OrchestratorMode,
-    [string]$ScriptDir,
-    [switch]$PauserAlreadyDone
+    [string]$ScriptDir
 )
 
 if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
@@ -101,7 +100,8 @@ function Set-WinSetupPauserDone {
 function Invoke-WinSetupPauser {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Dir
+        [string]$Dir,
+        [bool]$RunAsUser = $false
     )
 
     $pauserUrl = 'https://github.com/Leviatan1121/WindowsUpdatePauser/releases/latest/download/WindowsUpdatePauser.bat'
@@ -111,9 +111,15 @@ function Invoke-WinSetupPauser {
     Save-WinSetupReleaseFile -Uri $pauserUrl -Destination $pauserPath
 
     Write-Host '[*] Running Windows Update Pauser (close its window when finished)...' -ForegroundColor DarkGray
-    $proc = Start-Process -FilePath $pauserPath -WorkingDirectory $Dir -Wait -PassThru
+    if ($RunAsUser) {
+        $exitCode = Start-WinSetupUserContextProcess -FilePath $pauserPath -WorkingDirectory $Dir
+    } else {
+        $proc = Start-Process -FilePath $pauserPath -WorkingDirectory $Dir -Wait -PassThru
+        $exitCode = $proc.ExitCode
+    }
+
     Set-WinSetupPauserDone -Dir $Dir
-    return $proc.ExitCode
+    return $exitCode
 }
 
 function Start-WinSetupUserContextProcess {
@@ -137,55 +143,6 @@ function Start-WinSetupUserContextProcess {
 
     $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
     return $proc.ExitCode
-}
-
-function Start-WinSetupTrustLevelProcess {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$CommandLine,
-        [string]$WorkingDirectory
-    )
-
-    $exitFile = Join-Path $env:TEMP "WinSetup-Lim-$([guid]::NewGuid().ToString('N')).exit"
-    $cmdFile = Join-Path $env:TEMP "WinSetup-Lim-$([guid]::NewGuid().ToString('N')).cmd"
-
-    if ($WorkingDirectory) {
-        $commandBlock = @(
-            "@echo off"
-            "cd /d `"$WorkingDirectory`""
-            $CommandLine
-            "echo %ERRORLEVEL%>`"$exitFile`""
-        ) -join "`r`n"
-    } else {
-        $commandBlock = @(
-            "@echo off"
-            $CommandLine
-            "echo %ERRORLEVEL%>`"$exitFile`""
-        ) -join "`r`n"
-    }
-
-    Set-Content -LiteralPath $cmdFile -Value $commandBlock -Encoding ASCII
-
-    Write-Host '[*] Starting de-elevated process (visible window)...' -ForegroundColor DarkGray
-    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', "runas /trustlevel:0x20000 `"$cmdFile`"") -WindowStyle Normal | Out-Null
-
-    $deadline = (Get-Date).AddHours(2)
-    while (-not (Test-Path -LiteralPath $exitFile) -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 300
-    }
-
-    Remove-Item -LiteralPath $cmdFile -Force -ErrorAction SilentlyContinue
-
-    if (-not (Test-Path -LiteralPath $exitFile)) {
-        Write-Warning 'El proceso de-elevado no termino a tiempo.'
-        return 1
-    }
-
-    try {
-        return [int](Get-Content -LiteralPath $exitFile -Raw)
-    } finally {
-        Remove-Item -LiteralPath $exitFile -Force -ErrorAction SilentlyContinue
-    }
 }
 
 function Start-WinSetupChildProcess {
@@ -216,14 +173,6 @@ function Start-WinSetupChildProcess {
     }
 
     if ($OrchestratorIsAdmin) {
-        if ($TargetPath -like '*WingetRestorePinning.ps1') {
-            $argLine = ($ArgumentList | ForEach-Object {
-                if ($_ -match '\s') { "`"$($_ -replace '"', '\"')`"" } else { $_ }
-            }) -join ' '
-            $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$TargetPath`" $argLine"
-            return Start-WinSetupTrustLevelProcess -CommandLine $command -WorkingDirectory $WorkingDirectory
-        }
-
         return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
     }
 
@@ -297,7 +246,6 @@ function Get-WinSetupStepManifest {
         @{ Id = 'Privacy';          Label = 'Privacy.ps1';                        Level = 'Limited';  Type = 'Script'; Script = 'Privacy.ps1' }
         @{ Id = 'Performance';      Label = 'Performance.ps1';                    Level = 'Limited';  Type = 'Script'; Script = 'Performance.ps1' }
         @{ Id = 'WingetUpgrade';    Label = 'WinSetup-WingetUpgrade.ps1';         Level = 'Elevated'; Type = 'Script'; Script = 'WinSetup-WingetUpgrade.ps1'; RequiresAdmin = $true }
-        @{ Id = 'WingetRestore';    Label = 'WinSetup-WingetRestorePinning.ps1';  Level = 'Limited';  Type = 'Script'; Script = 'WinSetup-WingetRestorePinning.ps1'; RequiresAdmin = $true }
         @{ Id = 'Debloat';          Label = 'Debloat.ps1';                        Level = 'Elevated'; Type = 'Script'; Script = 'Debloat.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
         @{ Id = 'PerformanceSys';   Label = 'Performance.ps1 -SystemOnly';        Level = 'Elevated'; Type = 'Script'; Script = 'Performance.ps1'; Args = @('-SystemOnly'); RequiresAdmin = $true }
         @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Level = 'Limited';  Type = 'Script'; Script = 'Install-MousePointerPrompt.ps1'; Args = @('-Register') }
@@ -313,22 +261,7 @@ if (-not $ScriptDir) {
 
 if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     New-Item -ItemType Directory -Path $ScriptDir -Force | Out-Null
-
-    if (-not (Test-WinSetupPauserDone -Dir $ScriptDir)) {
-        Write-Host '=========================================================' -ForegroundColor Cyan
-        Write-Host '[!] Windows Update Pauser (before UAC)' -ForegroundColor Cyan
-        Write-Host '=========================================================' -ForegroundColor Cyan
-        $pauserExit = Invoke-WinSetupPauser -Dir $ScriptDir
-        if ($pauserExit -ne 0) {
-            Write-Warning "Windows Update Pauser exited with code $pauserExit."
-        } else {
-            Write-Host '[+] Windows Update Pauser completed.' -ForegroundColor Green
-        }
-    } else {
-        Write-Host '[*] Windows Update Pauser already done in this session.' -ForegroundColor DarkGray
-    }
-
-    $PauserAlreadyDone = $true
+    Remove-Item -LiteralPath (Get-WinSetupPauserMarkerPath -Dir $ScriptDir) -Force -ErrorAction SilentlyContinue
 
     $entryScript = Get-WinSetupEntryScriptPath -Dir $ScriptDir
 
@@ -336,8 +269,7 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
         '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', $entryScript,
         '-OrchestratorMode', 'Elevated',
-        '-ScriptDir', $ScriptDir,
-        '-PauserAlreadyDone'
+        '-ScriptDir', $ScriptDir
     )
 
     try {
@@ -369,7 +301,7 @@ if ($orchestratorIsAdmin) {
     Write-Host '[!] WinSetup - modo administrador (1 UAC)' -ForegroundColor Cyan
 } else {
     Write-Host '[!] WinSetup - modo limitado (sin admin)' -ForegroundColor Cyan
-    Write-Host '[~] Se omitiran: winget upgrade/restore, Debloat, Performance (sistema), Remote Support.' -ForegroundColor Yellow
+    Write-Host '[~] Se omitiran: winget upgrade, Debloat, Performance (sistema), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
 
@@ -390,9 +322,9 @@ foreach ($step in $steps) {
         continue
     }
 
-    if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir -or $PauserAlreadyDone -or $orchestratorIsAdmin)) {
+    if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir)) {
         Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Omitido'
-        Write-Host '[~] Ya ejecutado antes del UAC.' -ForegroundColor DarkGray
+        Write-Host '[~] Ya ejecutado en esta sesion.' -ForegroundColor DarkGray
         Write-WinSetupStepResult -Label $step.Label -ExitCode 0
         continue
     }
@@ -403,7 +335,7 @@ foreach ($step in $steps) {
     try {
         switch ($step.Type) {
             'External' {
-                $exitCode = Invoke-WinSetupPauser -Dir $ScriptDir
+                $exitCode = Invoke-WinSetupPauser -Dir $ScriptDir -RunAsUser:$orchestratorIsAdmin
             }
             'Inline' {
                 switch ($step.Id) {

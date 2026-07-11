@@ -1,4 +1,5 @@
-# WinSetup — restore winget certificate pinning. Limited (non-elevated) only; called from WinSetup.ps1.
+# WinSetup — restore winget certificate pinning. Elevated only; integrated into WinSetup-WingetUpgrade.ps1.
+# Kept for manual use if needed.
 
 $ErrorActionPreference = 'Continue'
 

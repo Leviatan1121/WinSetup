@@ -26,4 +26,12 @@ $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $env:Path = "$machinePath;$userPath"
 Get-Command winget -ErrorAction SilentlyContinue | Out-Null
 
+Write-Host '[*] Restoring winget certificate pinning...' -ForegroundColor DarkGray
+& winget settings --disable BypassCertificatePinningForMicrosoftStore
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "winget settings --disable BypassCertificatePinningForMicrosoftStore failed (exit $LASTEXITCODE)."
+} else {
+    Write-Host '[+] Certificate pinning restored.' -ForegroundColor Green
+}
+
 exit 0

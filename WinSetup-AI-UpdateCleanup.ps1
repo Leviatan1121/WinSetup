@@ -153,9 +153,15 @@ function Set-WinSetupAIPolicies {
     Set-ItemProperty -Path $voiceAccessKey -Name 'TextCorrection' -Value 1 -Type DWord
 
     $gamingAiKey = 'HKLM:\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Microsoft.Xbox.GamingAI.Companion.Host.GamingCompanionHostOptions'
-    if (-not (Test-Path $gamingAiKey)) { New-Item -Path $gamingAiKey -Force | Out-Null }
-    Set-ItemProperty -Path $gamingAiKey -Name 'ActivationType' -Value 0 -Type DWord
-    Set-ItemProperty -Path $gamingAiKey -Name 'Server' -Value ' ' -Type String
+    try {
+        if (-not (Test-Path $gamingAiKey)) {
+            New-Item -Path $gamingAiKey -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -Path $gamingAiKey -Name 'ActivationType' -Value 0 -Type DWord -ErrorAction Stop
+        Set-ItemProperty -Path $gamingAiKey -Name 'Server' -Value ' ' -Type String -ErrorAction Stop
+    } catch {
+        Write-Host "[~] Gaming Copilot registry key skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+    }
 
     $explorerPolicy = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
     if (-not (Test-Path $explorerPolicy)) { New-Item -Path $explorerPolicy -Force | Out-Null }

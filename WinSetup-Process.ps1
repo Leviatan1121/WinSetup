@@ -1,38 +1,4 @@
-# WinSetup — child process helpers for the orchestrator (Limited / Elevated).
-
-function Test-WinSetupIsAdmin {
-    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-        [Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Write-WinSetupStepHeader {
-    param(
-        [int]$Index,
-        [int]$Total,
-        [string]$Label,
-        [string]$Level
-    )
-    Write-Host "=========================================================" -ForegroundColor Cyan
-    Write-Host "[*] Paso $Index/$Total`: $Label ($Level)..." -ForegroundColor Cyan
-    Write-Host "=========================================================" -ForegroundColor Cyan
-}
-
-function Write-WinSetupStepResult {
-    param(
-        [string]$Label,
-        [int]$ExitCode,
-        [switch]$Skipped
-    )
-    if ($Skipped) {
-        Write-Host "[~] $Label omitido (requiere admin)." -ForegroundColor Yellow
-        return
-    }
-    if ($ExitCode -eq 0) {
-        Write-Host "[+] $Label completado (exit 0)." -ForegroundColor Green
-    } else {
-        Write-Warning "$Label terminó con código $ExitCode."
-    }
-}
+# WinSetup - child process helpers for the orchestrator (Limited / Elevated).
 
 function Start-WinSetupLimitedPowerShell {
     param(
@@ -84,7 +50,7 @@ exit `$code
             Start-Sleep -Milliseconds 200
         }
         if (-not (Test-Path -LiteralPath $doneFile)) {
-            Write-Warning 'El proceso Limited no terminó a tiempo.'
+            Write-Warning 'El proceso Limited no termino a tiempo.'
             return 1
         }
         if (Test-Path -LiteralPath $exitFile) {
@@ -112,7 +78,6 @@ function Start-WinSetupLimitedProcess {
     }
 
     if ($FilePath -like '*.bat' -or $FilePath -like '*.cmd') {
-        $cmdArgs = @('/c', "`"$FilePath`"") + $ArgumentList
         return Start-WinSetupLimitedPowerShell -ArgumentList @('-Command', "cmd.exe /c `"$FilePath`"") -WorkingDirectory $WorkingDirectory
     }
 
@@ -132,7 +97,7 @@ function Start-WinSetupChildProcess {
     )
 
     if (-not (Test-Path -LiteralPath $TargetPath)) {
-        Write-Warning "No se encontró: $TargetPath"
+        Write-Warning "No se encontro: $TargetPath"
         return 1
     }
 

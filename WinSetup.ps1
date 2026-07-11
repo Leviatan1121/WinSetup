@@ -34,7 +34,7 @@ function Get-WinSetupEntryScriptPath {
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     $savedScript = Join-Path $Dir 'WinSetup.ps1'
     Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (irm/iex mode)...' -ForegroundColor DarkGray
-    Invoke-RestMethod -Uri "$ReleaseBaseUrl/WinSetup.ps1" -OutFile $savedScript
+    Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup.ps1" -Destination $savedScript
     return $savedScript
 }
 
@@ -59,8 +59,29 @@ function Write-WinSetupStepResult {
     if ($ExitCode -eq 0) {
         Write-Host "[+] $Label completado (exit 0)." -ForegroundColor Green
     } else {
-        Write-Warning "$Label terminó con código $ExitCode."
+        Write-Warning "$Label termino con codigo $ExitCode."
     }
+}
+
+function Save-WinSetupReleaseFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
+}
+
+function Test-WinSetupProcessModuleFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -lt 64) { return $false }
+
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    return ($content -match 'function\s+Start-WinSetupChildProcess')
 }
 
 function Import-WinSetupProcessModule {
@@ -70,12 +91,54 @@ function Import-WinSetupProcessModule {
         (Join-Path $Dir 'WinSetup-Process.ps1'),
         (Join-Path $PSScriptRoot 'WinSetup-Process.ps1')
     )) {
-        if (Test-Path -LiteralPath $candidate) {
+        if (-not (Test-WinSetupProcessModuleFile -Path $candidate)) {
+            continue
+        }
+
+        try {
             . $candidate
+        } catch {
+            Write-Warning "WinSetup-Process.ps1 load failed ($candidate): $($_.Exception.Message)"
+            continue
+        }
+
+        if (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue) {
             return $true
         }
+
+        Write-Warning "WinSetup-Process.ps1 loaded but Start-WinSetupChildProcess is missing ($candidate)."
     }
+
     return $false
+}
+
+function Ensure-WinSetupProcessModule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Dir
+    )
+
+    if (Import-WinSetupProcessModule -Dir $Dir) {
+        return $true
+    }
+
+    $modulePath = Join-Path $Dir 'WinSetup-Process.ps1'
+    New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+
+    try {
+        Write-Host '[*] Downloading WinSetup-Process.ps1...' -ForegroundColor DarkGray
+        Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup-Process.ps1" -Destination $modulePath
+    } catch {
+        Write-Warning "Could not download WinSetup-Process.ps1: $($_.Exception.Message)"
+        return $false
+    }
+
+    if (-not (Test-WinSetupProcessModuleFile -Path $modulePath)) {
+        Write-Warning 'Downloaded WinSetup-Process.ps1 is invalid or incomplete.'
+        return $false
+    }
+
+    return Import-WinSetupProcessModule -Dir $Dir
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -129,7 +192,7 @@ function Save-WinSetupReleaseAssets {
 
         Write-Host "[*] Downloading $file..." -ForegroundColor DarkGray
         try {
-            Invoke-RestMethod -Uri "$ReleaseBaseUrl/$file" -OutFile $dest
+            Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/$file" -Destination $dest
         } catch {
             Write-Warning "Failed to download ${file}: $($_.Exception.Message)"
         }
@@ -183,7 +246,7 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     }
 
     Write-Host '=========================================================' -ForegroundColor Yellow
-    Write-Host '[!] UAC denegado — modo limitado (sin pasos de administrador).' -ForegroundColor Yellow
+    Write-Host '[!] UAC denegado - modo limitado (sin pasos de administrador).' -ForegroundColor Yellow
     Write-Host '=========================================================' -ForegroundColor Yellow
     $OrchestratorMode = 'Limited'
 }
@@ -195,25 +258,14 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
     exit 1
 }
 
-Import-WinSetupProcessModule -Dir $ScriptDir | Out-Null
-if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-    $earlyModule = Join-Path $ScriptDir 'WinSetup-Process.ps1'
-    if (-not (Test-Path -LiteralPath $earlyModule)) {
-        try {
-            Invoke-RestMethod -Uri "$ReleaseBaseUrl/WinSetup-Process.ps1" -OutFile $earlyModule
-        } catch {
-            Write-Warning "Could not pre-download WinSetup-Process.ps1: $($_.Exception.Message)"
-        }
-    }
-    Import-WinSetupProcessModule -Dir $ScriptDir | Out-Null
-}
+Ensure-WinSetupProcessModule -Dir $ScriptDir | Out-Null
 
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
-    Write-Host '[!] WinSetup — modo administrador (1 UAC)' -ForegroundColor Cyan
+    Write-Host '[!] WinSetup - modo administrador (1 UAC)' -ForegroundColor Cyan
 } else {
-    Write-Host '[!] WinSetup — modo limitado (sin admin)' -ForegroundColor Cyan
-    Write-Host '[~] Se omitirán: winget upgrade/restore, Debloat, Performance (sistema), Remote Support.' -ForegroundColor Yellow
+    Write-Host '[!] WinSetup - modo limitado (sin admin)' -ForegroundColor Cyan
+    Write-Host '[~] Se omitiran: winget upgrade/restore, Debloat, Performance (sistema), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
 
@@ -257,9 +309,8 @@ foreach ($step in $steps) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
                     'Download' {
                         Save-WinSetupReleaseAssets -Dir $ScriptDir
-                        Import-WinSetupProcessModule -Dir $ScriptDir | Out-Null
-                        if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-                            Write-Warning 'WinSetup-Process.ps1 missing after download — child scripts may fail.'
+                        if (-not (Ensure-WinSetupProcessModule -Dir $ScriptDir)) {
+                            Write-Warning 'WinSetup-Process.ps1 missing after download - child scripts may fail.'
                         }
                     }
                 }

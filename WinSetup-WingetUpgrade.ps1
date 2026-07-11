@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Continue'
 
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     Write-Warning 'winget is not available — skipping App Installer upgrade.'
+    Read-Host 'Presione Enter para continuar'
     exit 0
 }
 
@@ -34,4 +35,5 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host '[+] Certificate pinning restored.' -ForegroundColor Green
 }
 
+Read-Host 'Presione Enter para continuar'
 exit 0

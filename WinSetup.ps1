@@ -271,13 +271,15 @@ function Save-WinSetupReleaseAssets {
 
     foreach ($file in (Get-WinSetupReleaseAssets)) {
         $dest = Join-Path $Dir $file
-        $localSource = Join-Path $PSScriptRoot $file
 
-        if ($useLocal -and (Test-Path -LiteralPath $localSource)) {
-            Write-WinSetupProgressLine ($ProgressLabel -f "$file (local)")
-            Copy-Item -LiteralPath $localSource -Destination $dest -Force
-            $downloaded++
-            continue
+        if ($useLocal -and $PSScriptRoot) {
+            $localSource = Join-Path $PSScriptRoot $file
+            if (Test-Path -LiteralPath $localSource) {
+                Write-WinSetupProgressLine ($ProgressLabel -f "$file (local)")
+                Copy-Item -LiteralPath $localSource -Destination $dest -Force
+                $downloaded++
+                continue
+            }
         }
 
         Write-WinSetupProgressLine ($ProgressLabel -f $file)
@@ -339,15 +341,12 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
         if ($proc) { exit 0 }
     } catch [System.ComponentModel.Win32Exception] {
         if ($_.NativeErrorCode -ne 1223) {
-            Write-Warning "UAC elevation failed: $($_.Exception.Message)"
+            Write-Host '[~] UAC elevation failed.' -ForegroundColor Yellow
         }
     } catch {
-        Write-Warning "UAC elevation failed: $($_.Exception.Message)"
+        Write-Host '[~] UAC elevation failed.' -ForegroundColor Yellow
     }
 
-    Write-Host '=========================================================' -ForegroundColor Yellow
-    Write-Host '[!] UAC denied - running in limited mode (no admin steps).' -ForegroundColor Yellow
-    Write-Host '=========================================================' -ForegroundColor Yellow
     $OrchestratorMode = 'Limited'
 }
 #endregion
@@ -368,22 +367,18 @@ if ($orchestratorIsAdmin) {
 Write-Host '=========================================================' -ForegroundColor Cyan
 
 $steps = Get-WinSetupStepManifest
-$total = $steps.Count
+$total = @($steps | Where-Object { -not ([bool]$_.RequiresAdmin -and -not $orchestratorIsAdmin) }).Count
 $index = 0
-$skippedAdmin = [System.Collections.Generic.List[string]]::new()
 
 foreach ($step in $steps) {
-    $index++
     $requiresAdmin = [bool]$step.RequiresAdmin
     $skip = $requiresAdmin -and -not $orchestratorIsAdmin
 
     if ($skip) {
-        $skippedAdmin.Add($step.Label)
-        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped'
-        Write-WinSetupStepResult -Label $step.Label -ExitCode 0 -Skipped
         continue
     }
 
+    $index++
     if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir)) {
         Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped'
         Write-Host '[~] Already run in this session.' -ForegroundColor DarkGray
@@ -449,12 +444,6 @@ foreach ($step in $steps) {
 Write-Host '=========================================================' -ForegroundColor Yellow
 Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
 Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow
-if ($skippedAdmin.Count -gt 0) {
-    Write-Host '[~] Steps skipped (no admin):' -ForegroundColor Yellow
-    foreach ($name in $skippedAdmin) {
-        Write-Host "    - $name" -ForegroundColor Yellow
-    }
-}
 Write-Host '=========================================================' -ForegroundColor Yellow
 
 Read-Host 'Press Enter to continue'

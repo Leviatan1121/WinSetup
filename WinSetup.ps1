@@ -67,8 +67,19 @@ function Test-WinSetupIsAdmin {
 }
 
 function Write-WinSetupStepHeader {
-    param([int]$Index, [int]$Total, [string]$Label, [string]$Level)
-    Write-Host "=========================================================" -ForegroundColor Cyan
+    param(
+        [int]$Index,
+        [int]$Total,
+        [string]$Label,
+        [string]$Level,
+        [switch]$First
+    )
+    $separator = if ($First) {
+        '========================================================='
+    } else {
+        '---------------------------------------------------------'
+    }
+    Write-Host $separator -ForegroundColor Cyan
     Write-Host "[*] Step $Index/$Total`: $Label ($Level)..." -ForegroundColor Cyan
 }
 
@@ -377,13 +388,13 @@ foreach ($step in $steps) {
 
     $index++
     if ($step.Id -eq 'Pauser' -and (Test-WinSetupPauserDone -Dir $ScriptDir)) {
-        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped'
+        Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level 'Skipped' -First:($index -eq 1)
         Write-Host '[~] Already run in this session.' -ForegroundColor DarkGray
         Write-WinSetupStepResult -Label $step.Label -ExitCode 0
         continue
     }
 
-    Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level $step.Level
+    Write-WinSetupStepHeader -Index $index -Total $total -Label $step.Label -Level $step.Level -First:($index -eq 1)
 
     $exitCode = 0
     $downloadStats = $null
@@ -436,6 +447,8 @@ foreach ($step in $steps) {
     }
 }
 
+Write-Host '=========================================================' -ForegroundColor Cyan
+Write-Host ''
 Write-Host '=========================================================' -ForegroundColor Yellow
 Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
 Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow

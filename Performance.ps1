@@ -19,7 +19,7 @@ if ($SystemOnly) {
     Write-Host '=========================================================' -ForegroundColor Cyan
     Write-Host '[!] Performance (system) applied.' -ForegroundColor Cyan
     Write-Host '=========================================================' -ForegroundColor Cyan
-    return
+    exit 0
 }
 #endregion
 
@@ -130,16 +130,6 @@ $nullResult = [UIntPtr]::Zero
 #endregion
 
 #region Report
-$maskHex = ((Get-ItemProperty $desktopPath -Name 'UserPreferencesMask').UserPreferencesMask |
-    ForEach-Object { '{0:X2}' -f $_ }) -join ' '
-$vfx = (Get-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting').VisualFXSetting
-
-Write-Host '=========================================================' -ForegroundColor Cyan
-Write-Host '[!] Performance registry written.' -ForegroundColor Cyan
-Write-Host "    VisualFXSetting = $vfx" -ForegroundColor DarkGray
-Write-Host "    UserPreferencesMask = $maskHex" -ForegroundColor DarkGray
-Write-Host ''
-Write-Host '    Win11 requires SIGN OUT (not just Explorer restart) before' -ForegroundColor Yellow
-Write-Host '    sysdm.cpl checkboxes refresh. Then verify Custom preset.' -ForegroundColor Yellow
-Write-Host '=========================================================' -ForegroundColor Cyan
+Write-Host '[+] Performance (user) applied.' -ForegroundColor Green
+exit 0
 #endregion

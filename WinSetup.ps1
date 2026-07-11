@@ -91,7 +91,6 @@ function Get-WinSetupPausedPs1LaunchArgs {
 `$code = 0
 try {
     $invokeLine
-    if (`$null -ne `$LASTEXITCODE) { `$code = `$LASTEXITCODE }
 } catch {
     `$code = 1
 }

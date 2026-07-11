@@ -19,14 +19,13 @@ if ($versionBefore) {
 }
 
 Write-Host '[*] Enabling certificate pinning bypass for Microsoft Store...' -ForegroundColor DarkGray
-& winget settings --enable BypassCertificatePinningForMicrosoftStore
-if ($LASTEXITCODE -ne 0) {
-    $pinEnable = Resolve-WinSetupWingetExitCode -ExitCode $LASTEXITCODE
-    Write-Warning "winget settings --enable BypassCertificatePinningForMicrosoftStore failed ($($pinEnable.Name), exit $LASTEXITCODE)."
+$pinEnableExit = Invoke-WinSetupWingetCommand settings --enable BypassCertificatePinningForMicrosoftStore
+if ($pinEnableExit -ne 0) {
+    $pinEnable = Resolve-WinSetupWingetExitCode -ExitCode $pinEnableExit
+    Write-Warning "winget settings --enable BypassCertificatePinningForMicrosoftStore failed ($($pinEnable.Name), exit $pinEnableExit)."
 }
 
-& winget upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements
-$upgradeExit = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+$upgradeExit = Invoke-WinSetupWingetCommand upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements
 
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -50,10 +49,10 @@ if ($versionBefore -and $versionAfter -and $versionBefore -ne $versionAfter) {
 }
 
 Write-Host '[*] Restoring winget certificate pinning...' -ForegroundColor DarkGray
-& winget settings --disable BypassCertificatePinningForMicrosoftStore
-if ($LASTEXITCODE -ne 0) {
-    $pinDisable = Resolve-WinSetupWingetExitCode -ExitCode $LASTEXITCODE
-    Write-Warning "winget settings --disable BypassCertificatePinningForMicrosoftStore failed ($($pinDisable.Name), exit $LASTEXITCODE)."
+$pinDisableExit = Invoke-WinSetupWingetCommand settings --disable BypassCertificatePinningForMicrosoftStore
+if ($pinDisableExit -ne 0) {
+    $pinDisable = Resolve-WinSetupWingetExitCode -ExitCode $pinDisableExit
+    Write-Warning "winget settings --disable BypassCertificatePinningForMicrosoftStore failed ($($pinDisable.Name), exit $pinDisableExit)."
 } else {
     Write-Host '[+] Certificate pinning restored.' -ForegroundColor Green
 }

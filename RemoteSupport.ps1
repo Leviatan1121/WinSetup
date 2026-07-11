@@ -79,3 +79,4 @@ if ((Test-Path $mstsc) -and (Confirm-OptionalUninstall -AppName 'Remote Desktop 
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "[!] Remote support tools step finished." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
+exit 0

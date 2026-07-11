@@ -187,3 +187,4 @@ powercfg /change standby-timeout-dc 0 | Out-Null
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "[!] Configuration settings applied successfully." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
+exit 0

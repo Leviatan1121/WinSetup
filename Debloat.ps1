@@ -452,3 +452,5 @@ Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
 Start-Process explorer.exe
 #endregion
+
+exit 0

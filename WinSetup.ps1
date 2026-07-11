@@ -285,6 +285,14 @@ function Install-WinSetupUserPathHelpers {
     Write-Host '[+] Environment configured (%USERPROFILE%\bin + PATH).' -ForegroundColor Green
 }
 
+function Restart-WinSetupShell {
+    Write-Host '[*] Restarting Explorer and Start...' -ForegroundColor DarkGray
+    Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    Start-Process explorer.exe
+}
+
 function Get-WinSetupReleaseAssets {
     return @(
         'Configure.ps1', 'Privacy.ps1', 'Performance.ps1',
@@ -355,6 +363,7 @@ function Get-WinSetupStepManifest {
         @{ Id = 'PerformanceSys';   Label = 'Performance.ps1 -SystemOnly';        Level = 'Elevated'; Type = 'Script'; Script = 'Performance.ps1'; Args = @('-SystemOnly'); RequiresAdmin = $true }
         @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Type = 'Register'; Script = 'Install-MousePointerPrompt.ps1' }
         @{ Id = 'AppsHook';         Label = 'Install-AppsPrompt.ps1';             Type = 'Register'; Script = 'Install-AppsPrompt.ps1' }
+        @{ Id = 'ShellRefresh';     Label = 'Shell refresh';                      Level = 'Inline';   Type = 'Inline' }
         @{ Id = 'RemoteSupport';    Label = 'RemoteSupport.ps1';                  Level = 'Elevated'; Type = 'Script'; Script = 'RemoteSupport.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
     )
 }
@@ -445,6 +454,7 @@ foreach ($step in $steps) {
                         $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir
                         if ($downloadStats.Failed -gt 0) { $exitCode = 1 }
                     }
+                    'ShellRefresh' { Restart-WinSetupShell }
                 }
             }
             'Script' {

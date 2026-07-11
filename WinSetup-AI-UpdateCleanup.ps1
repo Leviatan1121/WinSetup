@@ -511,14 +511,19 @@ function Remove-WinSetupAIFiles {
 }
 
 function Invoke-WinSetupAIRemoval {
+    Write-Host '[*] AI policies, Recall, and store blocks...' -ForegroundColor DarkGray
     Set-WinSetupAIPolicies
     Disable-WinSetupRecallFeature
     Set-WinSetupAIStoreBlockPolicy
+
+    Write-Host '[*] Removing Copilot and AI packages...' -ForegroundColor DarkGray
     Remove-WinSetupAIAppxPackages
     Remove-WinSetupAICBSPackages
     Remove-WinSetupAITasksAndServices
     Invoke-WinSetupWingetUninstall --id Microsoft.Copilot_8wekyb3d8bbwe --silent --accept-source-agreements --disable-interactivity
     Invoke-WinSetupWingetUninstall --name "Microsoft Copilot" --silent --accept-source-agreements --disable-interactivity
+
+    Write-Host '[*] Disabling Photos AI and Gaming Copilot...' -ForegroundColor DarkGray
     Disable-WinSetupGamingCopilot
     Disable-WinSetupPhotosAI
     Remove-WinSetupAIFiles
@@ -584,7 +589,9 @@ function Register-WinSetupAIUpdateCleanupTask {
 
 function Initialize-WinSetupAI {
     Invoke-WinSetupAIRemoval
+    Write-Host '[*] AI prevention package...' -ForegroundColor DarkGray
     Install-WinSetupAIPreventionPackage
+    Write-Host '[*] AI update cleanup task...' -ForegroundColor DarkGray
     Register-WinSetupAIUpdateCleanupTask
 }
 

@@ -114,7 +114,6 @@ Invoke-WinSetupWingetUninstall --name "Widgets Platform Runtime" --silent --acce
 #endregion
 
 #region Copilot, Recall, and integrated AI
-Write-Host '[*] Removing Copilot, Recall, and integrated AI...' -ForegroundColor DarkGray
 $aiScriptPath = Join-Path $PSScriptRoot 'WinSetup-AI-UpdateCleanup.ps1'
 if (Test-Path -LiteralPath $aiScriptPath) {
     try {
@@ -243,10 +242,6 @@ function Uninstall-Win32AppByName {
 }
 #endregion
 
-#region Built-in apps > Xbox ecosystem (intentionally kept)
-Write-Host '[*] Xbox apps: kept (Game Bar, Xbox Live).' -ForegroundColor DarkGray
-#endregion
-
 #region Built-in apps > Package list
 Write-Host '[*] Removing built-in apps...' -ForegroundColor DarkGray
 Remove-BuiltInApps @(
@@ -297,6 +292,7 @@ $userProfiles = @('C:\Users\Default') + (
     ForEach-Object { $_.FullName }
 )
 
+Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
 Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
@@ -328,9 +324,6 @@ $emptyStartLayout = [Convert]::FromBase64String(@'
 4nrhSwH8TRucAIEL3m5RhU5aX0cAW7FJilySr5CE+V6aoBj7A+HZAaADAABc9u55LN8F4borYyXEGl8Q5+RZ+qERszeqUhhZXDvcjTF6rgdprauITLqPgMVMbSZbRsLN/O5uMjSLEr6nWYIwsMJkZMnZyZrhR3PugUhUKOYDqwySCY6/CPkL/Ooz/5j2R2hwWRGqc7ZsJxDFM1DWofjUiGjDUny+Y8UjowknQVaPYao0PC4bygKEbeZqCqRvSgPalSc53OFqCh2FHydzl09fChaos385QvF40EDEgSO8U9/dntAeNULwuuZBi7BkWSIOmWN1l4e+TZbtSJXwn+EINAJhRHyCSNeku21dsw+cMoLorMKnRmhJMLvE+CCdgNKIaPo/Krizva1+bMsI8bSkV/CxaCTLXodb/NuBYCsIHY1sTvbwSBRNMPvccw43RJCUKZRkBLkCVfW24ANbLfHXofHDMLxxFNUpBPSgzGHnueHknECcf6J4HCFBqzvSH1TjQ3S6J8tq2yaQ+jFNkxGRMushdXNNiTNjDFYMJNvgRL2lu63NPE+Cxy+IKC1NdKLweFdOGZr2mvKAw7t/fxmCTieUgLkegDomZbHL6anjy4SkjSCnfTBUNtxc0X3VJiha4wq/ArRrTtVnzcUcX+CI4BNTicx+X2eXugI+EHKjgaQS7fXHqQGEUMUeHMCXlgWUZ5kE3LFTjVifyVIGqYNDuqt7T9l7DWByiuRariySa7tiN1gA2ALKYlRsjsQL7xpxHnT1hi/9b+UuyC46cYQaDUcKDc4BGReJP2gDIyZfudLpgUPc7YfH9doiMcWimSylbKFtsI3Mfo0HONxet5XjzjDoziduYk2dFoFfz19uaRcOHtASKzaGdtk6RC+Tm4BbU/7PlbvHEKJZ720AxOQkzU9U8RWAHHsPUVfWzYoQc2dN8OQ/JlUAqe8+PI05ST4m3LoUpBKB+oU0H84aet5etGpIi4CthvazGencFObWJWNRzxk9BXIX2YoAdXB8b7JFwlxVdhgzZK0zkkrzSSmX9iJcNoi6Tp+RtnljzLTAv6xh8gwytIW5F2e5sVh7aiqo4sji0aE+ToqyNPV7eE9Idi2ZNeEbnJ9LX127uOl5jB280hs0caXLUrYiR15+Y31wtlD8JVeTDxDDac6v+e3C4VX+28mg9bYQ7NGYXZc7yZANC/nWTn+/hkTZUvR0gi+PUz4o/DSdKzbvVCAlqdjArcKkWW4r/WKUSLskoOKRPxdNLPVBl2S6blje4LvBzulpeHWubXWfCW4ILuOI
 '@)
 
-Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
 foreach ($stateDir in @(
     'C:\Users\Default\AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState'
 )) {
@@ -418,14 +411,6 @@ Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOMaxUploadBandwidth' 
 Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOPercentageMaxForegroundBandwidth' -Value 0 -Type DWord
 Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOPercentageMaxBackgroundBandwidth' -Value 0 -Type DWord
 Set-ItemProperty -Path $deliveryOptimizationPolicy -Name 'DOAllowUploadWhileOnBattery' -Value 0 -Type DWord
-#endregion
-
-#region Shell > Restart Explorer
-Write-Host '[*] Restarting Explorer...' -ForegroundColor DarkGray
-Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
-Start-Process explorer.exe
 #endregion
 
 exit 0

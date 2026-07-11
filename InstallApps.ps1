@@ -142,6 +142,11 @@ $CategoryCatalog = [ordered]@{
 #endregion
 
 #region Helpers
+$wingetHelpersPath = Join-Path $PSScriptRoot 'WinSetup-WingetHelpers.ps1'
+if (Test-Path -LiteralPath $wingetHelpersPath) {
+    . $wingetHelpersPath
+}
+
 function Get-SortedInstallCatalogEntries {
     param(
         [System.Collections.Specialized.OrderedDictionary]$Catalog
@@ -203,29 +208,22 @@ function Test-WingetAvailable {
     return $true
 }
 
-function Update-WinSetupWingetEnvironment {
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = "$machinePath;$userPath"
-    Get-Command winget -ErrorAction SilentlyContinue | Out-Null
-}
-
-function Test-WinSetupWingetAppInstallerUpgrade {
-    & winget upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
-    return ($LASTEXITCODE -eq 0)
-}
-
 function Repair-WinSetupWingetAppInstallerElevated {
     Write-Host '[!] Approve UAC to repair App Installer (winget)...' -ForegroundColor Yellow
 
-    $elevatedCommand = @'
-$ErrorActionPreference = 'Continue'
-& winget settings --enable BypassCertificatePinningForMicrosoftStore
-& winget upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
-$upgradeExit = $LASTEXITCODE
-& winget settings --disable BypassCertificatePinningForMicrosoftStore
-exit $upgradeExit
-'@
+    if (-not (Test-Path -LiteralPath $wingetHelpersPath)) {
+        Write-Warning 'WinSetup-WingetHelpers.ps1 not found — cannot repair App Installer.'
+        return $false
+    }
+
+    $helpersEscaped = $wingetHelpersPath -replace "'", "''"
+    $elevatedCommand = @"
+`$ErrorActionPreference = 'Continue'
+. '$helpersEscaped'
+`$resolved = Invoke-WinSetupAppInstallerUpgradeWithPinBypass
+if (`$resolved.IsSuccess -or `$resolved.IsBenign) { exit 0 }
+exit 1
+"@
 
     try {
         $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
@@ -245,22 +243,21 @@ exit $upgradeExit
 function Ensure-WingetAppInstaller {
     Write-Host '[*] Checking App Installer (winget)...' -ForegroundColor DarkGray
 
-    if (Test-WinSetupWingetAppInstallerUpgrade) {
-        Update-WinSetupWingetEnvironment
+    if (Test-WinSetupAppInstallerReady) {
+        Update-WinSetupWingetPath
         Write-Host '[+] App Installer is ready.' -ForegroundColor Green
         return $true
     }
 
-    Write-Host '[~] winget upgrade failed — App Installer may need repair.' -ForegroundColor Yellow
+    Write-Host '[~] App Installer needs repair — elevating...' -ForegroundColor Yellow
 
     if (-not (Repair-WinSetupWingetAppInstallerElevated)) {
         Write-Host '[!] Could not repair App Installer. Install it from the Microsoft Store and run again.' -ForegroundColor Red
         return $false
     }
 
-    Update-WinSetupWingetEnvironment
-
-    if (Test-WinSetupWingetAppInstallerUpgrade) {
+    if (Test-WinSetupAppInstallerReady) {
+        Update-WinSetupWingetPath
         Write-Host '[+] App Installer repaired.' -ForegroundColor Green
         return $true
     }
@@ -913,8 +910,7 @@ function Install-DownloadedPackage {
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     $installerPath = Join-Path $tempDir $fileName
 
-    Write-Host "[*] Downloading $name..." -ForegroundColor Cyan
-    Write-Host "    $url" -ForegroundColor DarkGray
+    Write-Host "[*] Downloading $name..." -ForegroundColor DarkGray
 
     try {
         Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing
@@ -929,10 +925,7 @@ function Install-DownloadedPackage {
         @('/S')
     }
 
-    Write-Host "[*] Installing $name..." -ForegroundColor Cyan
-    if ($installerArgs.Count -gt 0) {
-        Write-Host "    Args: $($installerArgs -join ' ')" -ForegroundColor DarkGray
-    }
+    Write-Host "[*] Installing $name..." -ForegroundColor DarkGray
 
     $process = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru
 
@@ -1056,7 +1049,7 @@ function Ensure-MiseInstalled {
         return $miseExe
     }
 
-    Write-Host '[*] Installing mise (required for language runtimes)...' -ForegroundColor Cyan
+    Write-Host '[*] Installing mise (required for language runtimes)...' -ForegroundColor DarkGray
     if (-not (Install-WingetPackage -Id 'jdx.mise' -Name 'mise')) {
         return $null
     }
@@ -1078,7 +1071,7 @@ function Install-MiseTool {
 
     Initialize-MiseEnvironment | Out-Null
 
-    Write-Host "[*] Installing $Name with mise ($Tool)..." -ForegroundColor Cyan
+    Write-Host "[*] Installing $Name with mise ($Tool)..." -ForegroundColor DarkGray
     & $miseExe use --global $Tool
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[!] mise use --global $Tool failed. Exit code:" $LASTEXITCODE -ForegroundColor Red
@@ -1091,8 +1084,6 @@ function Install-MiseTool {
 }
 
 function Wait-InstallAppsDismiss {
-    Write-Host ''
-    Write-Host ("Finished at {0}." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
     Read-Host 'Press Enter to close this window'
 }
 
@@ -1107,7 +1098,7 @@ function Invoke-PackagePostInstall {
 
     $failures = 0
     foreach ($step in $Package.PostInstall) {
-        Write-Host "[*] Running post-install: $step" -ForegroundColor Cyan
+        Write-Host "[*] Running post-install: $step" -ForegroundColor DarkGray
         Invoke-Expression $step
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[!] Post-install failed: $step. Exit code:" $LASTEXITCODE -ForegroundColor Red
@@ -1157,7 +1148,7 @@ function Install-WingetPackage {
         [string]$Source
     )
 
-    Write-Host "[*] Installing $Name ($Id)..." -ForegroundColor Cyan
+    Write-Host "[*] Installing $Name ($Id)..." -ForegroundColor DarkGray
 
     $wingetArgs = @(
         'install'
@@ -1175,8 +1166,9 @@ function Install-WingetPackage {
 
     & winget @wingetArgs
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[!] winget install failed for $Name ($Id). Exit code: $LASTEXITCODE" -ForegroundColor Red
+    $resolved = Resolve-WinSetupWingetExitCode -ExitCode $LASTEXITCODE
+    if (-not $resolved.IsSuccess) {
+        Write-Host "[!] winget install failed for $Name ($Id). $($resolved.Name) (exit $($resolved.ExitCode))" -ForegroundColor Red
         return $false
     }
 
@@ -1186,10 +1178,6 @@ function Install-WingetPackage {
 #endregion
 
 #region Main
-Write-Host '=========================================================' -ForegroundColor Cyan
-Write-Host '[!] WinSetup software install' -ForegroundColor Cyan
-Write-Host '=========================================================' -ForegroundColor Cyan
-
 if (-not (Test-WingetAvailable)) {
     Wait-InstallAppsDismiss
     exit 1
@@ -1208,13 +1196,11 @@ if ($selectedPackages.Count -eq 0) {
     exit 0
 }
 
-Write-Host ''
-Write-Host 'Selected:' (($selectedPackages | ForEach-Object { $_.Name }) -join ', ') -ForegroundColor Cyan
-Write-Host ''
-
 $failures = 0
 $installed = 0
 $total = $selectedPackages.Count
+Write-Host "[*] Installing $total selected app(s)..." -ForegroundColor DarkGray
+
 foreach ($package in ($selectedPackages | Sort-Object { $_.Name })) {
     if (Install-SelectedPackage -Package $package) {
         $installed++
@@ -1223,13 +1209,10 @@ foreach ($package in ($selectedPackages | Sort-Object { $_.Name })) {
     }
 }
 
-Write-Host ''
-Write-Host '=========================================================' -ForegroundColor Cyan
 if ($failures -eq 0) {
     Write-Host "[+] Installed $installed of $total app(s)." -ForegroundColor Green
 } else {
     Write-Host "[~] Installed $installed of $total app(s). $failures failed." -ForegroundColor Yellow
 }
-Write-Host '=========================================================' -ForegroundColor Cyan
 Wait-InstallAppsDismiss
 #endregion

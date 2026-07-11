@@ -13,6 +13,23 @@ if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
 
 $ErrorActionPreference = 'Continue'
 $ReleaseBaseUrl = 'https://github.com/Leviatan1121/WinSetup/releases/latest/download'
+$script:WinSetupProgressLength = 0
+
+function Write-WinSetupProgressLine {
+    param([string]$Message)
+    $pad = if ($Message.Length -lt $script:WinSetupProgressLength) {
+        ' ' * ($script:WinSetupProgressLength - $Message.Length)
+    } else { '' }
+    Write-Host "`r$Message$pad" -NoNewline -ForegroundColor DarkGray
+    $script:WinSetupProgressLength = $Message.Length
+}
+
+function Clear-WinSetupProgressLine {
+    if ($script:WinSetupProgressLength -gt 0) {
+        Write-Host (' ' * $script:WinSetupProgressLength + "`r") -NoNewline
+        $script:WinSetupProgressLength = 0
+    }
+}
 
 function Get-WinSetupDefaultScriptDir {
     if ($env:WINSETUP_LOCAL -eq '1' -and $PSScriptRoot) {
@@ -137,10 +154,10 @@ function Invoke-WinSetupPauser {
     $pauserUrl = 'https://github.com/Leviatan1121/WindowsUpdatePauser/releases/latest/download/WindowsUpdatePauser.bat'
     $pauserPath = Join-Path $Dir 'WindowsUpdatePauser.bat'
 
-    Write-Host '[*] Downloading Windows Update Pauser...' -ForegroundColor DarkGray
+    Write-WinSetupProgressLine '[*] Downloading Windows Update Pauser...'
     Save-WinSetupReleaseFile -Uri $pauserUrl -Destination $pauserPath
 
-    Write-Host '[*] Running Windows Update Pauser (close its window when finished)...' -ForegroundColor DarkGray
+    Write-WinSetupProgressLine '[*] Running Windows Update Pauser (close its window when finished)...'
     if ($RunAsUser) {
         $exitCode = Start-WinSetupUserContextProcess -FilePath $pauserPath -WorkingDirectory $Dir
     } else {
@@ -251,26 +268,19 @@ function Save-WinSetupReleaseAssets {
     $downloaded = 0
     $failed = 0
     $skipped = 0
-    $lastLabelLength = 0
 
     foreach ($file in (Get-WinSetupReleaseAssets)) {
         $dest = Join-Path $Dir $file
         $localSource = Join-Path $PSScriptRoot $file
 
         if ($useLocal -and (Test-Path -LiteralPath $localSource)) {
-            $label = ($ProgressLabel -f "$file (local)")
-            $pad = if ($label.Length -lt $lastLabelLength) { ' ' * ($lastLabelLength - $label.Length) } else { '' }
-            Write-Host "`r$label$pad" -NoNewline -ForegroundColor DarkGray
-            $lastLabelLength = $label.Length
+            Write-WinSetupProgressLine ($ProgressLabel -f "$file (local)")
             Copy-Item -LiteralPath $localSource -Destination $dest -Force
             $downloaded++
             continue
         }
 
-        $label = $ProgressLabel -f $file
-        $pad = if ($label.Length -lt $lastLabelLength) { ' ' * ($lastLabelLength - $label.Length) } else { '' }
-        Write-Host "`r$label$pad" -NoNewline -ForegroundColor DarkGray
-        $lastLabelLength = $label.Length
+        Write-WinSetupProgressLine ($ProgressLabel -f $file)
 
         try {
             Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/$file" -Destination $dest
@@ -280,10 +290,6 @@ function Save-WinSetupReleaseAssets {
             Write-Warning "Failed to download ${file}: $($_.Exception.Message)"
             $failed++
         }
-    }
-
-    if ($lastLabelLength -gt 0) {
-        Write-Host ''
     }
 
     return @{
@@ -340,7 +346,7 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     }
 
     Write-Host '=========================================================' -ForegroundColor Yellow
-    Write-Host '[!] UAC denied — running in limited mode (no admin steps).' -ForegroundColor Yellow
+    Write-Host '[!] UAC denied - running in limited mode (no admin steps).' -ForegroundColor Yellow
     Write-Host '=========================================================' -ForegroundColor Yellow
     $OrchestratorMode = 'Limited'
 }
@@ -354,9 +360,9 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
 
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
-    Write-Host '[!] WinSetup — administrator mode (single UAC)' -ForegroundColor Cyan
+    Write-Host '[!] WinSetup - administrator mode (single UAC)' -ForegroundColor Cyan
 } else {
-    Write-Host '[!] WinSetup — limited mode (no admin)' -ForegroundColor Cyan
+    Write-Host '[!] WinSetup - limited mode (no admin)' -ForegroundColor Cyan
     Write-Host '[~] Skipping: winget upgrade, Debloat, Performance (system), Remote Support.' -ForegroundColor Yellow
 }
 Write-Host '=========================================================' -ForegroundColor Cyan
@@ -423,15 +429,20 @@ foreach ($step in $steps) {
         $exitCode = 1
     }
 
-    Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
-
-    if ($step.Id -eq 'Download' -and $downloadStats) {
+    if ($step.Id -eq 'Pauser') {
+        Clear-WinSetupProgressLine
+        Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
         Write-Host '=========================================================' -ForegroundColor Cyan
+    } elseif ($step.Id -eq 'Download' -and $downloadStats) {
+        Clear-WinSetupProgressLine
         if ($downloadStats.Failed -gt 0) {
-            Write-Warning "Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed."
+            Write-Host "[~] Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed (exit $exitCode)." -ForegroundColor Yellow
         } else {
-            Write-Host "[+] Downloaded $($downloadStats.Downloaded) assets." -ForegroundColor Green
+            Write-Host "[+] Downloaded $($downloadStats.Downloaded) assets (exit $exitCode)." -ForegroundColor Green
         }
+        Write-Host '=========================================================' -ForegroundColor Cyan
+    } else {
+        Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
     }
 }
 

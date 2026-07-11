@@ -53,12 +53,10 @@ function Get-WinSetupEntryScriptPath {
 
     $inMemoryScript = $MyInvocation.MyCommand.Definition
     if ($inMemoryScript -and $inMemoryScript.Length -gt 1024) {
-        Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (irm/iex in-memory)...' -ForegroundColor DarkGray
         Set-Content -LiteralPath $savedScript -Value $inMemoryScript -Encoding UTF8
         return $savedScript
     }
 
-    Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (download)...' -ForegroundColor DarkGray
     Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup.ps1" -Destination $savedScript
     return $savedScript
 }
@@ -72,7 +70,6 @@ function Write-WinSetupStepHeader {
     param([int]$Index, [int]$Total, [string]$Label, [string]$Level)
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host "[*] Step $Index/$Total`: $Label ($Level)..." -ForegroundColor Cyan
-    Write-Host "=========================================================" -ForegroundColor Cyan
 }
 
 function Write-WinSetupStepResult {
@@ -427,7 +424,6 @@ foreach ($step in $steps) {
     if ($step.Id -eq 'Pauser') {
         Clear-WinSetupProgressLine
         Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
-        Write-Host '=========================================================' -ForegroundColor Cyan
     } elseif ($step.Id -eq 'Download' -and $downloadStats) {
         Clear-WinSetupProgressLine
         if ($downloadStats.Failed -gt 0) {
@@ -435,7 +431,6 @@ foreach ($step in $steps) {
         } else {
             Write-Host "[+] Downloaded $($downloadStats.Downloaded) assets (exit $exitCode)." -ForegroundColor Green
         }
-        Write-Host '=========================================================' -ForegroundColor Cyan
     } else {
         Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode
     }

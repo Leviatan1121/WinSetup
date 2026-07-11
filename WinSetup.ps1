@@ -447,13 +447,8 @@ foreach ($step in $steps) {
 }
 
 Write-Host '=========================================================' -ForegroundColor Yellow
-Write-Host '[!] Baseline complete. Sign out and back in (or reboot)' -ForegroundColor Yellow
-Write-Host '    so Performance preset shows correctly in sysdm.cpl.' -ForegroundColor Yellow
-Write-Host '    After reboot: Settings opens to Mouse pointer (pick your color).' -ForegroundColor Yellow
-Write-Host '    After reboot: InstallApps opens to select software to install.' -ForegroundColor Yellow
-if ($orchestratorIsAdmin) {
-    Write-Host '    If RDP uninstall prompted for restart, reboot when ready.' -ForegroundColor Yellow
-}
+Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
+Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow
 if ($skippedAdmin.Count -gt 0) {
     Write-Host '[~] Steps skipped (no admin):' -ForegroundColor Yellow
     foreach ($name in $skippedAdmin) {

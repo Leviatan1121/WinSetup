@@ -3,7 +3,7 @@ name: Actualizar Release Fija
 on:
   push:
     branches:
-      - main
+      - test
 
 permissions:
   contents: write

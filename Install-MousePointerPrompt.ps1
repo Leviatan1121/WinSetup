@@ -1,11 +1,12 @@
-# WinSetup — register Open-MousePointerSettings.ps1 for after next reboot (Run key + marker).
-# Call once from WinSetup.ps1 — not during Configure.
+# Post-reboot hook: copies Open-MousePointerSettings.ps1 to %LOCALAPPDATA%\WinSetup
+# and registers it in HKCU\...\Run. Runs once silently from WinSetup.ps1 (-Register).
 
 param(
     [switch]$Register,
     [string]$SourceDir = $PSScriptRoot
 )
 
+#region Legacy cleanup
 function Remove-WinSetupCursorLegacy {
     $startupPath = [Environment]::GetFolderPath('Startup')
     $winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
@@ -44,11 +45,11 @@ function Remove-WinSetupCursorLegacy {
     Get-ChildItem -Path $userCursors -Filter '*_eoa.cur' -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
 }
+#endregion
 
+#region Post-reboot registration
 function Install-WinSetupMousePointerSettingsPrompt {
-    param(
-        [string]$SourceDir = $PSScriptRoot
-    )
+    param([string]$SourceDir = $PSScriptRoot)
 
     Remove-WinSetupCursorLegacy
 
@@ -56,12 +57,9 @@ function Install-WinSetupMousePointerSettingsPrompt {
     if (-not (Test-Path $winSetupDir)) { New-Item -Path $winSetupDir -ItemType Directory -Force | Out-Null }
 
     $source = Join-Path $SourceDir 'Open-MousePointerSettings.ps1'
-    $dest = Join-Path $winSetupDir 'Open-MousePointerSettings.ps1'
-    if (-not (Test-Path $source)) {
-        Write-Warning 'Open-MousePointerSettings.ps1 not found - skipping post-reboot settings prompt.'
-        return
-    }
+    if (-not (Test-Path $source)) { return }
 
+    $dest = Join-Path $winSetupDir 'Open-MousePointerSettings.ps1'
     Copy-Item -Path $source -Destination $dest -Force
 
     $markerPath = Join-Path $winSetupDir '.open-mouse-after-reboot'
@@ -71,6 +69,7 @@ function Install-WinSetupMousePointerSettingsPrompt {
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name 'WinSetup-MousePointerSettings' -Value $cmd -Type String
 }
+#endregion
 
 if ($Register) {
     Install-WinSetupMousePointerSettingsPrompt -SourceDir $SourceDir

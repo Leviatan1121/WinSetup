@@ -16,18 +16,30 @@ $script:WinSetupProgressLength = 0
 
 function Write-WinSetupProgressLine {
     param([string]$Message)
-    $pad = if ($Message.Length -lt $script:WinSetupProgressLength) {
-        ' ' * ($script:WinSetupProgressLength - $Message.Length)
-    } else { '' }
-    Write-Host "`r$Message$pad" -NoNewline -ForegroundColor DarkGray
+    try {
+        if ($script:WinSetupProgressLength -eq 0) {
+            [Console]::WriteLine($Message)
+        } else {
+            $pad = if ($Message.Length -lt $script:WinSetupProgressLength) {
+                ' ' * ($script:WinSetupProgressLength - $Message.Length)
+            } else { '' }
+            [Console]::Write("`r$Message$pad")
+        }
+    } catch {
+        Write-Host $Message -ForegroundColor DarkGray
+    }
     $script:WinSetupProgressLength = $Message.Length
 }
 
 function Clear-WinSetupProgressLine {
-    if ($script:WinSetupProgressLength -gt 0) {
-        Write-Host (' ' * $script:WinSetupProgressLength + "`r") -NoNewline
-        $script:WinSetupProgressLength = 0
+    if ($script:WinSetupProgressLength -eq 0) { return }
+    try {
+        [Console]::Write("`r$(' ' * $script:WinSetupProgressLength)`r")
+        [Console]::WriteLine('')
+    } catch {
+        Write-Host ''
     }
+    $script:WinSetupProgressLength = 0
 }
 
 function Get-WinSetupDefaultScriptDir {
@@ -199,6 +211,24 @@ function Start-WinSetupUserContextProcess {
     return $proc.ExitCode
 }
 
+function Invoke-WinSetupRegisterHook {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptDir,
+        [Parameter(Mandatory = $true)][string]$Script
+    )
+
+    $scriptPath = Join-Path $ScriptDir $Script
+    if (-not (Test-Path -LiteralPath $scriptPath)) { return 1 }
+
+    $proc = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', $scriptPath,
+        '-Register',
+        '-SourceDir', $ScriptDir
+    )
+    return $proc.ExitCode
+}
+
 function Start-WinSetupChildProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -319,8 +349,8 @@ function Get-WinSetupStepManifest {
         @{ Id = 'WingetUpgrade';    Label = 'WinSetup-WingetUpgrade.ps1';         Level = 'Elevated'; Type = 'Script'; Script = 'WinSetup-WingetUpgrade.ps1'; RequiresAdmin = $true }
         @{ Id = 'Debloat';          Label = 'Debloat.ps1';                        Level = 'Elevated'; Type = 'Script'; Script = 'Debloat.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
         @{ Id = 'PerformanceSys';   Label = 'Performance.ps1 -SystemOnly';        Level = 'Elevated'; Type = 'Script'; Script = 'Performance.ps1'; Args = @('-SystemOnly'); RequiresAdmin = $true }
-        @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Level = 'Limited';  Type = 'Script'; Script = 'Install-MousePointerPrompt.ps1'; Args = @('-Register') }
-        @{ Id = 'AppsHook';         Label = 'Install-AppsPrompt.ps1';             Level = 'Limited';  Type = 'Script'; Script = 'Install-AppsPrompt.ps1'; Args = @('-Register') }
+        @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Type = 'Register'; Script = 'Install-MousePointerPrompt.ps1' }
+        @{ Id = 'AppsHook';         Label = 'Install-AppsPrompt.ps1';             Type = 'Register'; Script = 'Install-AppsPrompt.ps1' }
         @{ Id = 'RemoteSupport';    Label = 'RemoteSupport.ps1';                  Level = 'Elevated'; Type = 'Script'; Script = 'RemoteSupport.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
     )
 }
@@ -369,7 +399,9 @@ Write-Host '=========================================================' -Foregrou
 Write-Host ''
 
 $steps = Get-WinSetupStepManifest
-$total = @($steps | Where-Object { -not ([bool]$_.RequiresAdmin -and -not $orchestratorIsAdmin) }).Count
+$total = @($steps | Where-Object {
+    $_.Type -ne 'Register' -and -not ([bool]$_.RequiresAdmin -and -not $orchestratorIsAdmin)
+}).Count
 $index = 0
 
 foreach ($step in $steps) {
@@ -377,6 +409,11 @@ foreach ($step in $steps) {
     $skip = $requiresAdmin -and -not $orchestratorIsAdmin
 
     if ($skip) {
+        continue
+    }
+
+    if ($step.Type -eq 'Register') {
+        $null = Invoke-WinSetupRegisterHook -ScriptDir $ScriptDir -Script $step.Script
         continue
     }
 
@@ -410,9 +447,6 @@ foreach ($step in $steps) {
                 $scriptPath = Join-Path $ScriptDir $step.Script
                 $args = @()
                 if ($step.Args) { $args += $step.Args }
-                if ($step.Script -match 'Prompt\.ps1$') {
-                    $args += @('-SourceDir', $ScriptDir)
-                }
                 $exitCode = Start-WinSetupChildProcess `
                     -Level $step.Level `
                     -TargetPath $scriptPath `

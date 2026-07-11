@@ -1,11 +1,12 @@
-# WinSetup — register Open-InstallApps.ps1 for after next reboot (Run key + marker).
-# Call once from WinSetup.ps1.
+# Post-reboot hook: copies InstallApps.ps1 + Open-InstallApps.ps1 to %LOCALAPPDATA%\WinSetup
+# and registers the runner in HKCU\...\Run. Runs once silently from WinSetup.ps1 (-Register).
 
 param(
     [switch]$Register,
     [string]$SourceDir = $PSScriptRoot
 )
 
+#region Legacy cleanup
 function Remove-WinSetupAppsLegacy {
     $winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
 
@@ -27,30 +28,21 @@ function Remove-WinSetupAppsLegacy {
 
     Remove-Item (Join-Path $winSetupDir '.open-install-apps-after-reboot') -Force -ErrorAction SilentlyContinue
 }
+#endregion
 
+#region Post-reboot registration
 function Install-WinSetupAppsPrompt {
-    param(
-        [string]$SourceDir = $PSScriptRoot
-    )
+    param([string]$SourceDir = $PSScriptRoot)
 
     Remove-WinSetupAppsLegacy
 
     $winSetupDir = Join-Path $env:LOCALAPPDATA 'WinSetup'
     if (-not (Test-Path $winSetupDir)) { New-Item -Path $winSetupDir -ItemType Directory -Force | Out-Null }
 
-    $files = @(
-        @{ Source = 'InstallApps.ps1'; Dest = 'InstallApps.ps1' }
-        @{ Source = 'Open-InstallApps.ps1'; Dest = 'Open-InstallApps.ps1' }
-    )
-
-    foreach ($file in $files) {
-        $source = Join-Path $SourceDir $file.Source
-        $dest = Join-Path $winSetupDir $file.Dest
-        if (-not (Test-Path $source)) {
-            Write-Warning "$($file.Source) not found - skipping post-reboot app installer."
-            return
-        }
-        Copy-Item -Path $source -Destination $dest -Force
+    foreach ($file in @('InstallApps.ps1', 'Open-InstallApps.ps1')) {
+        $source = Join-Path $SourceDir $file
+        if (-not (Test-Path $source)) { return }
+        Copy-Item -Path $source -Destination (Join-Path $winSetupDir $file) -Force
     }
 
     $markerPath = Join-Path $winSetupDir '.open-install-apps-after-reboot'
@@ -61,6 +53,7 @@ function Install-WinSetupAppsPrompt {
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name 'WinSetup-InstallApps' -Value $cmd -Type String
 }
+#endregion
 
 if ($Register) {
     Install-WinSetupAppsPrompt -SourceDir $SourceDir

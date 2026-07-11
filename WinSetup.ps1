@@ -33,7 +33,15 @@ function Get-WinSetupEntryScriptPath {
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     $savedScript = Join-Path $Dir 'WinSetup.ps1'
-    Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (irm/iex mode)...' -ForegroundColor DarkGray
+
+    $inMemoryScript = $MyInvocation.MyCommand.Definition
+    if ($inMemoryScript -and $inMemoryScript.Length -gt 1024) {
+        Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (irm/iex in-memory)...' -ForegroundColor DarkGray
+        Set-Content -LiteralPath $savedScript -Value $inMemoryScript -Encoding UTF8
+        return $savedScript
+    }
+
+    Write-Host '[*] Persisting WinSetup.ps1 for bootstrap (download)...' -ForegroundColor DarkGray
     Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup.ps1" -Destination $savedScript
     return $savedScript
 }
@@ -74,48 +82,129 @@ function Save-WinSetupReleaseFile {
     Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
 }
 
-function Test-WinSetupProcessModuleFile {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    if ((Get-Item -LiteralPath $Path).Length -lt 64) { return $false }
-
-    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
-    return ($content -match 'function\s+Start-WinSetupChildProcess')
-}
-
-function Resolve-WinSetupProcessModulePath {
+function Start-WinSetupLimitedPowerShell {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Dir
+        [string[]]$ArgumentList,
+        [string]$WorkingDirectory
     )
 
-    foreach ($candidate in @(
-        (Join-Path $Dir 'WinSetup-Process.ps1'),
-        (Join-Path $PSScriptRoot 'WinSetup-Process.ps1')
-    )) {
-        if (Test-WinSetupProcessModuleFile -Path $candidate) {
-            return $candidate
-        }
+    $taskName = "WinSetup-Limited-$([guid]::NewGuid().ToString('N'))"
+    $doneFile = Join-Path $env:TEMP "$taskName.done"
+    $exitFile = Join-Path $env:TEMP "$taskName.exit"
+    $wrapperPath = Join-Path $env:TEMP "$taskName.ps1"
+
+    Remove-Item -LiteralPath $doneFile, $exitFile, $wrapperPath -Force -ErrorAction SilentlyContinue
+
+    $argText = ($ArgumentList | ForEach-Object {
+        if ($_ -match '\s') { "'$($_ -replace '''', '''''')'" } else { $_ }
+    }) -join ', '
+
+    @"
+`$ErrorActionPreference = 'Continue'
+try {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass @($argText)
+    `$code = `$LASTEXITCODE
+    if (`$null -eq `$code) { `$code = 0 }
+    if (`$code -ne 0) { exit `$code }
+} catch {
+    `$code = 1
+}
+Set-Content -LiteralPath '$exitFile' -Value `$code -Force
+Set-Content -LiteralPath '$doneFile' -Value ok -Force
+exit `$code
+"@ | Set-Content -LiteralPath $wrapperPath -Encoding UTF8
+
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
+    if ($WorkingDirectory) {
+        $action.WorkingDirectory = $WorkingDirectory
     }
 
-    $modulePath = Join-Path $Dir 'WinSetup-Process.ps1'
-    New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
 
     try {
-        Write-Host '[*] Downloading WinSetup-Process.ps1...' -ForegroundColor DarkGray
-        Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup-Process.ps1" -Destination $modulePath
-    } catch {
-        Write-Warning "Could not download WinSetup-Process.ps1: $($_.Exception.Message)"
-        return $null
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = (Get-Date).AddHours(2)
+        while (-not (Test-Path -LiteralPath $doneFile) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (-not (Test-Path -LiteralPath $doneFile)) {
+            Write-Warning 'El proceso Limited no termino a tiempo.'
+            return 1
+        }
+        if (Test-Path -LiteralPath $exitFile) {
+            return [int](Get-Content -LiteralPath $exitFile -Raw)
+        }
+        return 0
+    }
+    finally {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $doneFile, $exitFile, $wrapperPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Start-WinSetupLimitedProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [string]$WorkingDirectory
+    )
+
+    if ($FilePath -like '*.ps1') {
+        $psArgs = @('-File', $FilePath) + $ArgumentList
+        return Start-WinSetupLimitedPowerShell -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory
     }
 
-    if (Test-WinSetupProcessModuleFile -Path $modulePath) {
-        return $modulePath
+    if ($FilePath -like '*.bat' -or $FilePath -like '*.cmd') {
+        return Start-WinSetupLimitedPowerShell -ArgumentList @('-Command', "cmd.exe /c `"$FilePath`"") -WorkingDirectory $WorkingDirectory
     }
 
-    Write-Warning 'Downloaded WinSetup-Process.ps1 is invalid or incomplete.'
-    return $null
+    return Start-WinSetupLimitedPowerShell -ArgumentList @('-Command', "& `"$FilePath`" $($ArgumentList -join ' ')") -WorkingDirectory $WorkingDirectory
+}
+
+function Start-WinSetupChildProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Limited', 'Elevated')]
+        [string]$Level,
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath,
+        [string[]]$ArgumentList = @(),
+        [string]$WorkingDirectory,
+        [bool]$OrchestratorIsAdmin
+    )
+
+    if (-not (Test-Path -LiteralPath $TargetPath)) {
+        Write-Warning "No se encontro: $TargetPath"
+        return 1
+    }
+
+    if ($Level -eq 'Elevated') {
+        if ($TargetPath -like '*.ps1') {
+            $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $TargetPath) + $ArgumentList
+            $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
+            return $proc.ExitCode
+        }
+        $proc = Start-Process -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
+        return $proc.ExitCode
+    }
+
+    if ($OrchestratorIsAdmin) {
+        return Start-WinSetupLimitedProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+    }
+
+    if ($TargetPath -like '*.ps1') {
+        $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $TargetPath) + $ArgumentList
+        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
+        return $proc.ExitCode
+    }
+
+    $proc = Start-Process -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
+    return $proc.ExitCode
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -235,18 +324,6 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
     exit 1
 }
 
-$winSetupProcessModulePath = Resolve-WinSetupProcessModulePath -Dir $ScriptDir
-if ($winSetupProcessModulePath) {
-    try {
-        . $winSetupProcessModulePath
-    } catch {
-        Write-Warning "WinSetup-Process.ps1 load failed ($winSetupProcessModulePath): $($_.Exception.Message)"
-    }
-}
-if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-    Write-Warning 'WinSetup-Process.ps1 not loaded - child scripts may fail until Download step completes.'
-}
-
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
     Write-Host '[!] WinSetup - modo administrador (1 UAC)' -ForegroundColor Cyan
@@ -281,33 +358,15 @@ foreach ($step in $steps) {
             'External' {
                 $pauserUrl = 'https://github.com/Leviatan1121/WindowsUpdatePauser/releases/latest/download/WindowsUpdatePauser.bat'
                 $pauserPath = Join-Path $ScriptDir 'WindowsUpdatePauser.bat'
-                Invoke-RestMethod -Uri $pauserUrl -OutFile $pauserPath
-                if (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue) {
-                    $exitCode = Start-WinSetupChildProcess `
-                        -Level 'Limited' -TargetPath $pauserPath -WorkingDirectory $ScriptDir `
-                        -OrchestratorIsAdmin $orchestratorIsAdmin
-                } else {
-                    $proc = Start-Process -FilePath $pauserPath -WorkingDirectory $ScriptDir -Wait -PassThru
-                    $exitCode = $proc.ExitCode
-                }
+                Invoke-WebRequest -Uri $pauserUrl -OutFile $pauserPath -UseBasicParsing
+                $exitCode = Start-WinSetupChildProcess `
+                    -Level 'Limited' -TargetPath $pauserPath -WorkingDirectory $ScriptDir `
+                    -OrchestratorIsAdmin $orchestratorIsAdmin
             }
             'Inline' {
                 switch ($step.Id) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
-                    'Download' {
-                        Save-WinSetupReleaseAssets -Dir $ScriptDir
-                        $winSetupProcessModulePath = Resolve-WinSetupProcessModulePath -Dir $ScriptDir
-                        if ($winSetupProcessModulePath) {
-                            try {
-                                . $winSetupProcessModulePath
-                            } catch {
-                                Write-Warning "WinSetup-Process.ps1 load failed ($winSetupProcessModulePath): $($_.Exception.Message)"
-                            }
-                        }
-                        if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-                            Write-Warning 'WinSetup-Process.ps1 missing after download - child scripts may fail.'
-                        }
-                    }
+                    'Download' { Save-WinSetupReleaseAssets -Dir $ScriptDir }
                 }
             }
             'Script' {
@@ -316,9 +375,6 @@ foreach ($step in $steps) {
                 if ($step.Args) { $args += $step.Args }
                 if ($step.Script -match 'Prompt\.ps1$') {
                     $args += @('-SourceDir', $ScriptDir)
-                }
-                if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-                    throw 'Start-WinSetupChildProcess not available - run Download step first or set WINSETUP_LOCAL=1.'
                 }
                 $exitCode = Start-WinSetupChildProcess `
                     -Level $step.Level `

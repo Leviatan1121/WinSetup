@@ -84,42 +84,19 @@ function Test-WinSetupProcessModuleFile {
     return ($content -match 'function\s+Start-WinSetupChildProcess')
 }
 
-function Import-WinSetupProcessModule {
-    param([string]$Dir)
-
-    foreach ($candidate in @(
-        (Join-Path $Dir 'WinSetup-Process.ps1'),
-        (Join-Path $PSScriptRoot 'WinSetup-Process.ps1')
-    )) {
-        if (-not (Test-WinSetupProcessModuleFile -Path $candidate)) {
-            continue
-        }
-
-        try {
-            . $candidate
-        } catch {
-            Write-Warning "WinSetup-Process.ps1 load failed ($candidate): $($_.Exception.Message)"
-            continue
-        }
-
-        if (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue) {
-            return $true
-        }
-
-        Write-Warning "WinSetup-Process.ps1 loaded but Start-WinSetupChildProcess is missing ($candidate)."
-    }
-
-    return $false
-}
-
-function Ensure-WinSetupProcessModule {
+function Resolve-WinSetupProcessModulePath {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Dir
     )
 
-    if (Import-WinSetupProcessModule -Dir $Dir) {
-        return $true
+    foreach ($candidate in @(
+        (Join-Path $Dir 'WinSetup-Process.ps1'),
+        (Join-Path $PSScriptRoot 'WinSetup-Process.ps1')
+    )) {
+        if (Test-WinSetupProcessModuleFile -Path $candidate) {
+            return $candidate
+        }
     }
 
     $modulePath = Join-Path $Dir 'WinSetup-Process.ps1'
@@ -130,15 +107,15 @@ function Ensure-WinSetupProcessModule {
         Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup-Process.ps1" -Destination $modulePath
     } catch {
         Write-Warning "Could not download WinSetup-Process.ps1: $($_.Exception.Message)"
-        return $false
+        return $null
     }
 
-    if (-not (Test-WinSetupProcessModuleFile -Path $modulePath)) {
-        Write-Warning 'Downloaded WinSetup-Process.ps1 is invalid or incomplete.'
-        return $false
+    if (Test-WinSetupProcessModuleFile -Path $modulePath) {
+        return $modulePath
     }
 
-    return Import-WinSetupProcessModule -Dir $Dir
+    Write-Warning 'Downloaded WinSetup-Process.ps1 is invalid or incomplete.'
+    return $null
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -258,7 +235,17 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
     exit 1
 }
 
-Ensure-WinSetupProcessModule -Dir $ScriptDir | Out-Null
+$winSetupProcessModulePath = Resolve-WinSetupProcessModulePath -Dir $ScriptDir
+if ($winSetupProcessModulePath) {
+    try {
+        . $winSetupProcessModulePath
+    } catch {
+        Write-Warning "WinSetup-Process.ps1 load failed ($winSetupProcessModulePath): $($_.Exception.Message)"
+    }
+}
+if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
+    Write-Warning 'WinSetup-Process.ps1 not loaded - child scripts may fail until Download step completes.'
+}
 
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
@@ -309,7 +296,15 @@ foreach ($step in $steps) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
                     'Download' {
                         Save-WinSetupReleaseAssets -Dir $ScriptDir
-                        if (-not (Ensure-WinSetupProcessModule -Dir $ScriptDir)) {
+                        $winSetupProcessModulePath = Resolve-WinSetupProcessModulePath -Dir $ScriptDir
+                        if ($winSetupProcessModulePath) {
+                            try {
+                                . $winSetupProcessModulePath
+                            } catch {
+                                Write-Warning "WinSetup-Process.ps1 load failed ($winSetupProcessModulePath): $($_.Exception.Message)"
+                            }
+                        }
+                        if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
                             Write-Warning 'WinSetup-Process.ps1 missing after download - child scripts may fail.'
                         }
                     }
@@ -323,7 +318,7 @@ foreach ($step in $steps) {
                     $args += @('-SourceDir', $ScriptDir)
                 }
                 if (-not (Get-Command Start-WinSetupChildProcess -ErrorAction SilentlyContinue)) {
-                    throw 'Start-WinSetupChildProcess not available — run Download step first or set WINSETUP_LOCAL=1.'
+                    throw 'Start-WinSetupChildProcess not available - run Download step first or set WINSETUP_LOCAL=1.'
                 }
                 $exitCode = Start-WinSetupChildProcess `
                     -Level $step.Level `

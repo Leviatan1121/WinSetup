@@ -99,11 +99,43 @@ function Write-WinSetupStepResult {
     if ($ExitCode -eq 0) {
         Write-Host "[+] $Label completed (exit 0)." -ForegroundColor Green
     } else {
-        Write-Warning "$Label finished with exit code $ExitCode."
+        Write-Host "[~] $Label finished with exit code $ExitCode." -ForegroundColor Yellow
     }
 }
 
-function Get-WinSetupPausedPs1LaunchArgs {
+function Get-WinSetupErrorLogPath {
+    param([Parameter(Mandatory = $true)][string]$Dir)
+    return Join-Path $Dir 'WinSetup-errors.log'
+}
+
+function Initialize-WinSetupErrorLog {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $logDir = Split-Path -Parent $Path
+    if ($logDir -and -not (Test-Path -LiteralPath $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+    Set-Content -LiteralPath $Path -Value '' -Encoding UTF8 -Force
+}
+
+function Add-WinSetupStepErrors {
+    param(
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$StepLabel,
+        [Parameter(Mandatory = $true)][string[]]$Messages
+    )
+    if (-not $Messages -or $Messages.Count -eq 0) { return }
+
+    $block = @("=== $StepLabel ===") + @($Messages) + ''
+    Add-Content -LiteralPath $LogPath -Value $block -Encoding UTF8
+}
+
+function Test-WinSetupErrorLogHasContent {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    return -not [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $Path -Raw))
+}
+
+function Get-WinSetupChildPs1LaunchArgs {
     param(
         [Parameter(Mandatory = $true)]
         [string]$TargetPath,
@@ -126,7 +158,6 @@ try {
 } catch {
     `$code = 1
 }
-Read-Host 'Press Enter to close this window'
 exit `$code
 "@
 
@@ -200,7 +231,7 @@ function Start-WinSetupUserContextProcess {
     )
 
     if ($FilePath -like '*.ps1') {
-        $psArgs = Get-WinSetupPausedPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList
+        $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
         return $proc.ExitCode
     }
@@ -245,13 +276,12 @@ function Start-WinSetupChildProcess {
     )
 
     if (-not (Test-Path -LiteralPath $TargetPath)) {
-        Write-Warning "Not found: $TargetPath"
         return 1
     }
 
     if ($Level -eq 'Elevated') {
         if ($TargetPath -like '*.ps1') {
-            $psArgs = Get-WinSetupPausedPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList
+            $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList
             $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
             return $proc.ExitCode
         }
@@ -316,6 +346,7 @@ function Save-WinSetupReleaseAssets {
     $downloaded = 0
     $failed = 0
     $skipped = 0
+    $failures = [System.Collections.Generic.List[string]]::new()
     $script:WinSetupProgressLength = 0
 
     foreach ($file in (Get-WinSetupReleaseAssets)) {
@@ -338,7 +369,7 @@ function Save-WinSetupReleaseAssets {
             $downloaded++
         } catch {
             $script:WinSetupProgressLength = 0
-            Write-Warning "Failed to download ${file}: $($_.Exception.Message)"
+            $failures.Add("Failed to download ${file}: $($_.Exception.Message)")
             $failed++
         }
     }
@@ -347,6 +378,7 @@ function Save-WinSetupReleaseAssets {
         Downloaded = $downloaded
         Failed     = $failed
         Skipped    = $skipped
+        Failures   = @($failures)
     }
 }
 
@@ -401,6 +433,9 @@ if ($OrchestratorMode -eq 'Elevated' -and -not $orchestratorIsAdmin) {
     exit 1
 }
 
+$winSetupErrorLogPath = Get-WinSetupErrorLogPath -Dir $ScriptDir
+Initialize-WinSetupErrorLog -Path $winSetupErrorLogPath
+
 Write-Host '=========================================================' -ForegroundColor Cyan
 if ($orchestratorIsAdmin) {
     Write-Host '[!] WinSetup - administrator mode (single UAC)' -ForegroundColor Cyan
@@ -426,7 +461,12 @@ foreach ($step in $steps) {
     }
 
     if ($step.Type -eq 'Register') {
-        $null = Invoke-WinSetupRegisterHook -ScriptDir $ScriptDir -Script $step.Script
+        $regExit = Invoke-WinSetupRegisterHook -ScriptDir $ScriptDir -Script $step.Script
+        if ($regExit -ne 0) {
+            Add-WinSetupStepErrors -LogPath $winSetupErrorLogPath -StepLabel $step.Label -Messages @(
+                "Exit code: $regExit"
+            )
+        }
         continue
     }
 
@@ -442,6 +482,7 @@ foreach ($step in $steps) {
 
     $exitCode = 0
     $downloadStats = $null
+    $stepErrors = [System.Collections.Generic.List[string]]::new()
     try {
         switch ($step.Type) {
             'External' {
@@ -452,26 +493,43 @@ foreach ($step in $steps) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
                     'Download' {
                         $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir
-                        if ($downloadStats.Failed -gt 0) { $exitCode = 1 }
+                        if ($downloadStats.Failed -gt 0) {
+                            $exitCode = 1
+                            foreach ($msg in $downloadStats.Failures) {
+                                $stepErrors.Add($msg)
+                            }
+                        }
                     }
                     'ShellRefresh' { Restart-WinSetupShell }
                 }
             }
             'Script' {
                 $scriptPath = Join-Path $ScriptDir $step.Script
-                $args = @()
-                if ($step.Args) { $args += $step.Args }
-                $exitCode = Start-WinSetupChildProcess `
-                    -Level $step.Level `
-                    -TargetPath $scriptPath `
-                    -ArgumentList $args `
-                    -WorkingDirectory $ScriptDir `
-                    -OrchestratorIsAdmin $orchestratorIsAdmin
+                if (-not (Test-Path -LiteralPath $scriptPath)) {
+                    $exitCode = 1
+                    $stepErrors.Add("Script not found: $scriptPath")
+                } else {
+                    $args = @()
+                    if ($step.Args) { $args += $step.Args }
+                    $exitCode = Start-WinSetupChildProcess `
+                        -Level $step.Level `
+                        -TargetPath $scriptPath `
+                        -ArgumentList $args `
+                        -WorkingDirectory $ScriptDir `
+                        -OrchestratorIsAdmin $orchestratorIsAdmin
+                }
             }
         }
     } catch {
-        Write-Warning "$($step.Label) failed: $($_.Exception.Message)"
         $exitCode = 1
+        $stepErrors.Add($_.Exception.Message)
+    }
+
+    if ($exitCode -ne 0 -and $stepErrors.Count -eq 0) {
+        $stepErrors.Add("Exit code: $exitCode")
+    }
+    if ($stepErrors.Count -gt 0) {
+        Add-WinSetupStepErrors -LogPath $winSetupErrorLogPath -StepLabel $step.Label -Messages @($stepErrors)
     }
 
     if ($step.Id -eq 'Pauser') {
@@ -493,10 +551,22 @@ foreach ($step in $steps) {
 
 Write-Host '=========================================================' -ForegroundColor Cyan
 Write-Host ''
-Write-Host '=========================================================' -ForegroundColor Yellow
-Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
-Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow
-Write-Host '=========================================================' -ForegroundColor Yellow
+
+if (Test-WinSetupErrorLogHasContent -Path $winSetupErrorLogPath) {
+    Write-Host '=========================================================' -ForegroundColor Red
+    Write-Host '[!] Baseline finished with errors.' -ForegroundColor Red
+    Write-Host "    Log: $winSetupErrorLogPath" -ForegroundColor Red
+    Write-Host '=========================================================' -ForegroundColor Red
+    Write-Host ''
+    Get-Content -LiteralPath $winSetupErrorLogPath | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    Write-Host ''
+    Write-Host '[~] Reboot when ready; post-reboot prompts may still run.' -ForegroundColor DarkGray
+} else {
+    Write-Host '=========================================================' -ForegroundColor Yellow
+    Write-Host '[!] Baseline complete. Reboot to finish setup.' -ForegroundColor Yellow
+    Write-Host '    After reboot: mouse pointer settings and app installer will open.' -ForegroundColor Yellow
+    Write-Host '=========================================================' -ForegroundColor Yellow
+}
 Write-Host ''
 
 Read-Host 'Press Enter to continue'

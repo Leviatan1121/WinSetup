@@ -2,7 +2,8 @@
 
 param(
     [string]$OrchestratorMode,
-    [string]$ScriptDir
+    [string]$ScriptDir,
+    [switch]$Local
 )
 
 if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
@@ -38,8 +39,12 @@ function Complete-WinSetupProgressLine {
     $script:WinSetupProgressLength = 0
 }
 
+function Test-WinSetupUseLocal {
+    return $Local.IsPresent -and [bool]$PSScriptRoot
+}
+
 function Get-WinSetupDefaultScriptDir {
-    if ($env:WINSETUP_LOCAL -eq '1' -and $PSScriptRoot) {
+    if (Test-WinSetupUseLocal) {
         return $PSScriptRoot
     }
     return Join-Path $env:TEMP 'WinSetup'
@@ -57,13 +62,6 @@ function Get-WinSetupEntryScriptPath {
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     $savedScript = Join-Path $Dir 'WinSetup.ps1'
-
-    $inMemoryScript = $MyInvocation.MyCommand.Definition
-    if ($inMemoryScript -and $inMemoryScript.Length -gt 1024) {
-        Set-Content -LiteralPath $savedScript -Value $inMemoryScript -Encoding UTF8
-        return $savedScript
-    }
-
     Save-WinSetupReleaseFile -Uri "$ReleaseBaseUrl/WinSetup.ps1" -Destination $savedScript
     return $savedScript
 }
@@ -141,7 +139,8 @@ function Get-WinSetupChildPs1LaunchArgs {
     param(
         [Parameter(Mandatory = $true)]
         [string]$TargetPath,
-        [string[]]$ArgumentList = @()
+        [string[]]$ArgumentList = @(),
+        [string]$WarningLogPath
     )
 
     $targetEscaped = $TargetPath -replace "'", "''"
@@ -152,18 +151,62 @@ function Get-WinSetupChildPs1LaunchArgs {
         $invokeLine = "& '$targetEscaped'"
     }
 
+    $warningCapture = ''
+    $warnLogEscaped = ''
+    if ($WarningLogPath) {
+        $warnLogEscaped = $WarningLogPath -replace "'", "''"
+        $warningCapture = @"
+
+    foreach (`$item in `$output) {
+        if (`$item -is [System.Management.Automation.WarningRecord]) {
+            [void]`$warnLines.Add([string]`$item.Message)
+        } elseif (`$item -is [System.Management.Automation.ErrorRecord]) {
+            if (`$code -eq 0) { `$code = 1 }
+            [void]`$warnLines.Add("ERROR: `$(`$item.Exception.Message)")
+        }
+    }
+    if (`$warnLines.Count -gt 0) {
+        Set-Content -LiteralPath '$warnLogEscaped' -Value (`$warnLines) -Encoding UTF8
+    }
+"@
+    }
+
     $command = @"
 `$ErrorActionPreference = 'Continue'
+`$WarningPreference = 'Continue'
 `$code = 0
+`$warnLines = [System.Collections.Generic.List[string]]::new()
 try {
-    $invokeLine
+    `$output = & {
+        $invokeLine
+    } *>&1
+$warningCapture
 } catch {
     `$code = 1
+    if ('$warnLogEscaped') {
+        Set-Content -LiteralPath '$warnLogEscaped' -Value @(`$_.Exception.Message) -Encoding UTF8
+    }
 }
 exit `$code
 "@
 
     return @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $command)
+}
+
+function Read-WinSetupChildWarningLog {
+    param([string]$WarningLogPath)
+
+    if (-not $WarningLogPath -or -not (Test-Path -LiteralPath $WarningLogPath)) {
+        return @()
+    }
+
+    try {
+        $lines = @(Get-Content -LiteralPath $WarningLogPath -ErrorAction Stop)
+        Remove-Item -LiteralPath $WarningLogPath -Force -ErrorAction SilentlyContinue
+        return $lines
+    } catch {
+        return @()
+    }
 }
 
 function Save-WinSetupReleaseFile {
@@ -214,7 +257,8 @@ function Invoke-WinSetupPauser {
 
     Write-WinSetupProgressLine '[*] Running Windows Update Pauser (close its window when finished)...'
     if ($RunAsUser) {
-        $exitCode = Start-WinSetupUserContextProcess -FilePath $pauserPath -WorkingDirectory $Dir
+        $pauserResult = Start-WinSetupUserContextProcess -FilePath $pauserPath -WorkingDirectory $Dir
+        $exitCode = $pauserResult.ExitCode
     } else {
         $proc = Start-Process -FilePath $pauserPath -WorkingDirectory $Dir -Wait -PassThru
         $exitCode = $proc.ExitCode
@@ -229,22 +273,26 @@ function Start-WinSetupUserContextProcess {
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [string]$WarningLogPath
     )
 
     if ($FilePath -like '*.ps1') {
-        $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList
+        $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList -WarningLogPath $WarningLogPath
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
-        return $proc.ExitCode
+        return @{
+            ExitCode = $proc.ExitCode
+            Warnings = @(Read-WinSetupChildWarningLog -WarningLogPath $WarningLogPath)
+        }
     }
 
     if ($FilePath -like '*.bat' -or $FilePath -like '*.cmd') {
         $proc = Start-Process -FilePath $FilePath -WorkingDirectory $WorkingDirectory -Wait -PassThru
-        return $proc.ExitCode
+        return @{ ExitCode = $proc.ExitCode; Warnings = @() }
     }
 
     $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
-    return $proc.ExitCode
+    return @{ ExitCode = $proc.ExitCode; Warnings = @() }
 }
 
 function Invoke-WinSetupRegisterHook {
@@ -274,28 +322,28 @@ function Start-WinSetupChildProcess {
         [string]$TargetPath,
         [string[]]$ArgumentList = @(),
         [string]$WorkingDirectory,
-        [bool]$OrchestratorIsAdmin
+        [bool]$OrchestratorIsAdmin,
+        [string]$WarningLogPath
     )
 
     if (-not (Test-Path -LiteralPath $TargetPath)) {
-        return 1
+        return @{ ExitCode = 1; Warnings = @() }
     }
 
     if ($Level -eq 'Elevated') {
         if ($TargetPath -like '*.ps1') {
-            $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList
+            $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList -WarningLogPath $WarningLogPath
             $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
-            return $proc.ExitCode
+            return @{
+                ExitCode = $proc.ExitCode
+                Warnings = @(Read-WinSetupChildWarningLog -WarningLogPath $WarningLogPath)
+            }
         }
         $proc = Start-Process -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
-        return $proc.ExitCode
+        return @{ ExitCode = $proc.ExitCode; Warnings = @() }
     }
 
-    if ($OrchestratorIsAdmin) {
-        return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
-    }
-
-    return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+    return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WarningLogPath $WarningLogPath
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -330,33 +378,91 @@ function Restart-WinSetupShell {
     } catch { }
 }
 
-function Get-WinSetupReleaseAssets {
+function Get-WinSetupStepManifest {
     return @(
-        'Configure.ps1', 'Privacy.ps1', 'Performance.ps1',
-        'Install-MousePointerPrompt.ps1', 'Open-MousePointerSettings.ps1',
-        'Install-AppsPrompt.ps1', 'Open-InstallApps.ps1', 'InstallApps.ps1',
-        'WinSetup-AI-UpdateCleanup.ps1', 'WinSetup-Process.ps1',
-        'WinSetup-WingetUpgrade.ps1', 'WinSetup-WingetHelpers.ps1',
-        'Debloat.ps1', 'RemoteSupport.ps1'
+        @{ Id = 'Pauser';           Label = 'Windows Update Pauser';              Level = 'Limited';  Type = 'External' }
+        @{ Id = 'PathHelpers';      Label = 'User PATH helpers';                  Level = 'Inline';   Type = 'Inline' }
+        @{ Id = 'Download';         Label = 'Download release assets';            Level = 'Inline';   Type = 'Inline' }
+        @{ Id = 'Configure';        Label = 'Configure.ps1';                      Level = 'Limited';  Type = 'Script'; Script = 'Configure.ps1' }
+        @{ Id = 'Privacy';          Label = 'Privacy.ps1';                        Level = 'Limited';  Type = 'Script'; Script = 'Privacy.ps1' }
+        @{ Id = 'Performance';      Label = 'Performance.ps1';                    Level = 'Limited';  Type = 'Script'; Script = 'Performance.ps1' }
+        @{ Id = 'WingetUpgrade';    Label = 'WinSetup-WingetUpgrade.ps1';         Level = 'Elevated'; Type = 'Script'; Script = 'WinSetup-WingetUpgrade.ps1'; RequiresAdmin = $true }
+        @{ Id = 'Debloat';          Label = 'Debloat.ps1';                        Level = 'Elevated'; Type = 'Script'; Script = 'Debloat.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
+        @{ Id = 'PerformanceSys';   Label = 'Performance.ps1 -SystemOnly';        Level = 'Elevated'; Type = 'Script'; Script = 'Performance.ps1'; Args = @('-SystemOnly'); RequiresAdmin = $true }
+        @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Type = 'Register'; Script = 'Install-MousePointerPrompt.ps1' }
+        @{ Id = 'AppsHook';         Label = 'Install-AppsPrompt.ps1';             Type = 'Register'; Script = 'Install-AppsPrompt.ps1' }
+        @{ Id = 'ShellRefresh';     Label = 'Shell refresh';                      Level = 'Inline';   Type = 'Inline' }
+        @{ Id = 'RemoteSupport';    Label = 'RemoteSupport.ps1';                  Level = 'Elevated'; Type = 'Script'; Script = 'RemoteSupport.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
     )
+}
+
+function Get-WinSetupScriptDependencies {
+    return @{
+        'Debloat.ps1'                = @('WinSetup-AI-UpdateCleanup.ps1', 'WinSetup-WingetHelpers.ps1')
+        'WinSetup-WingetUpgrade.ps1' = @('WinSetup-WingetHelpers.ps1')
+    }
+}
+
+function Get-WinSetupHookPayloads {
+    return @{
+        'Install-MousePointerPrompt.ps1' = @('Open-MousePointerSettings.ps1')
+        'Install-AppsPrompt.ps1'         = @('Open-InstallApps.ps1', 'InstallApps.ps1')
+    }
+}
+
+function Get-WinSetupReleaseAssets {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$IncludeAdminOnly
+    )
+
+    $assets = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $dependencies = Get-WinSetupScriptDependencies
+    $hookPayloads = Get-WinSetupHookPayloads
+
+    foreach ($step in Get-WinSetupStepManifest) {
+        if ($step.RequiresAdmin -and -not $IncludeAdminOnly) {
+            continue
+        }
+
+        if (-not $step.Script) {
+            continue
+        }
+
+        [void]$assets.Add($step.Script)
+
+        foreach ($payload in ($hookPayloads[$step.Script] | Where-Object { $_ })) {
+            [void]$assets.Add($payload)
+        }
+    }
+
+    foreach ($script in @($assets)) {
+        foreach ($dependency in ($dependencies[$script] | Where-Object { $_ })) {
+            [void]$assets.Add($dependency)
+        }
+    }
+
+    return @($assets) | Sort-Object
 }
 
 function Save-WinSetupReleaseAssets {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Dir,
+        [Parameter(Mandatory = $true)]
+        [bool]$IncludeAdminOnly,
         [string]$ProgressLabel = '[*] Downloading {0}...'
     )
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-    $useLocal = ($env:WINSETUP_LOCAL -eq '1')
+    $useLocal = Test-WinSetupUseLocal
     $downloaded = 0
     $failed = 0
     $skipped = 0
     $failures = [System.Collections.Generic.List[string]]::new()
     $script:WinSetupProgressLength = 0
 
-    foreach ($file in (Get-WinSetupReleaseAssets)) {
+    foreach ($file in (Get-WinSetupReleaseAssets -IncludeAdminOnly:$IncludeAdminOnly)) {
         $dest = Join-Path $Dir $file
 
         if ($useLocal -and $PSScriptRoot) {
@@ -367,6 +473,12 @@ function Save-WinSetupReleaseAssets {
                 $downloaded++
                 continue
             }
+        }
+
+        if (-not $useLocal -and (Test-Path -LiteralPath $dest)) {
+            Write-WinSetupProgressLine ($ProgressLabel -f "$file (cached)")
+            $skipped++
+            continue
         }
 
         Write-WinSetupProgressLine ($ProgressLabel -f $file)
@@ -389,24 +501,6 @@ function Save-WinSetupReleaseAssets {
     }
 }
 
-function Get-WinSetupStepManifest {
-    return @(
-        @{ Id = 'Pauser';           Label = 'Windows Update Pauser';              Level = 'Limited';  Type = 'External' }
-        @{ Id = 'PathHelpers';      Label = 'User PATH helpers';                  Level = 'Inline';   Type = 'Inline' }
-        @{ Id = 'Download';         Label = 'Download release assets';            Level = 'Inline';   Type = 'Inline' }
-        @{ Id = 'Configure';        Label = 'Configure.ps1';                      Level = 'Limited';  Type = 'Script'; Script = 'Configure.ps1' }
-        @{ Id = 'Privacy';          Label = 'Privacy.ps1';                        Level = 'Limited';  Type = 'Script'; Script = 'Privacy.ps1' }
-        @{ Id = 'Performance';      Label = 'Performance.ps1';                    Level = 'Limited';  Type = 'Script'; Script = 'Performance.ps1' }
-        @{ Id = 'WingetUpgrade';    Label = 'WinSetup-WingetUpgrade.ps1';         Level = 'Elevated'; Type = 'Script'; Script = 'WinSetup-WingetUpgrade.ps1'; RequiresAdmin = $true }
-        @{ Id = 'Debloat';          Label = 'Debloat.ps1';                        Level = 'Elevated'; Type = 'Script'; Script = 'Debloat.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
-        @{ Id = 'PerformanceSys';   Label = 'Performance.ps1 -SystemOnly';        Level = 'Elevated'; Type = 'Script'; Script = 'Performance.ps1'; Args = @('-SystemOnly'); RequiresAdmin = $true }
-        @{ Id = 'MouseHook';        Label = 'Install-MousePointerPrompt.ps1';     Type = 'Register'; Script = 'Install-MousePointerPrompt.ps1' }
-        @{ Id = 'AppsHook';         Label = 'Install-AppsPrompt.ps1';             Type = 'Register'; Script = 'Install-AppsPrompt.ps1' }
-        @{ Id = 'ShellRefresh';     Label = 'Shell refresh';                      Level = 'Inline';   Type = 'Inline' }
-        @{ Id = 'RemoteSupport';    Label = 'RemoteSupport.ps1';                  Level = 'Elevated'; Type = 'Script'; Script = 'RemoteSupport.ps1'; Args = @('-WinSetupElevated'); RequiresAdmin = $true }
-    )
-}
-
 #region Bootstrap - single UAC handoff
 if (-not $ScriptDir) {
     $ScriptDir = Get-WinSetupDefaultScriptDir
@@ -424,6 +518,9 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
         '-OrchestratorMode', 'Elevated',
         '-ScriptDir', $ScriptDir
     )
+    if ($Local.IsPresent) {
+        $elevArgs += '-Local'
+    }
 
     try {
         $proc = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ArgumentList $elevArgs
@@ -499,7 +596,7 @@ foreach ($step in $steps) {
                 switch ($step.Id) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
                     'Download' {
-                        $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir
+                        $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir -IncludeAdminOnly:$orchestratorIsAdmin
                         if ($downloadStats.Failed -gt 0) {
                             $exitCode = 1
                             foreach ($msg in $downloadStats.Failures) {
@@ -518,12 +615,22 @@ foreach ($step in $steps) {
                 } else {
                     $args = @()
                     if ($step.Args) { $args += $step.Args }
-                    $exitCode = Start-WinSetupChildProcess `
+                    $warningLogPath = Join-Path $ScriptDir ".winsetup-warnings-$([guid]::NewGuid().ToString('N')).log"
+                    $childResult = Start-WinSetupChildProcess `
                         -Level $step.Level `
                         -TargetPath $scriptPath `
                         -ArgumentList $args `
                         -WorkingDirectory $ScriptDir `
-                        -OrchestratorIsAdmin $orchestratorIsAdmin
+                        -OrchestratorIsAdmin $orchestratorIsAdmin `
+                        -WarningLogPath $warningLogPath
+                    $exitCode = $childResult.ExitCode
+                    foreach ($warning in $childResult.Warnings) {
+                        if ($warning -match '^ERROR:\s*(.+)$') {
+                            $stepErrors.Add($Matches[1])
+                        } else {
+                            $stepErrors.Add("WARNING: $warning")
+                        }
+                    }
                 }
             }
         }
@@ -547,9 +654,9 @@ foreach ($step in $steps) {
         }
     } elseif ($step.Id -eq 'Download' -and $downloadStats) {
         if ($downloadStats.Failed -gt 0) {
-            Complete-WinSetupProgressLine -Message "[~] Downloaded $($downloadStats.Downloaded) assets; $($downloadStats.Failed) failed (exit $exitCode)." -Color Yellow
+            Complete-WinSetupProgressLine -Message "[~] Downloaded $($downloadStats.Downloaded), skipped $($downloadStats.Skipped); $($downloadStats.Failed) failed (exit $exitCode)." -Color Yellow
         } else {
-            Complete-WinSetupProgressLine -Message "[+] Downloaded $($downloadStats.Downloaded) assets (exit $exitCode)."
+            Complete-WinSetupProgressLine -Message "[+] Downloaded $($downloadStats.Downloaded), skipped $($downloadStats.Skipped) (exit $exitCode)."
         }
     } else {
         Write-WinSetupStepResult -Label $step.Label -ExitCode $exitCode

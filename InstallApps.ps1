@@ -141,10 +141,137 @@ $CategoryCatalog = [ordered]@{
 }
 #endregion
 
-#region Helpers
-$wingetHelpersPath = Join-Path $PSScriptRoot 'WinSetup-WingetHelpers.ps1'
-if (Test-Path -LiteralPath $wingetHelpersPath) {
-    . $wingetHelpersPath
+#region Helpers — winget (self-contained; no external WinSetup scripts)
+function Invoke-InstallAppsWingetCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$WingetArgs
+    )
+
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        return 0
+    }
+
+    $exitCode = 0
+    $null = & winget @WingetArgs 2>&1
+    if ($null -ne $LASTEXITCODE) {
+        $exitCode = $LASTEXITCODE
+    }
+    return $exitCode
+}
+
+function Resolve-InstallAppsWingetExitCode {
+    param([Parameter(Mandatory = $true)][int]$ExitCode)
+
+    $bytes = [BitConverter]::GetBytes([int32]$ExitCode)
+    $asUInt = [BitConverter]::ToUInt32($bytes, 0)
+    $normalized = [BitConverter]::ToInt32($bytes, 0)
+    $hex = '0x{0:X8}' -f $asUInt
+
+    $names = @{
+        0                      = 'SUCCESS'
+        [int32]0x8A15002B      = 'UPDATE_NOT_APPLICABLE'
+        [int32]0x8A15004F      = 'UPGRADE_VERSION_NOT_NEWER'
+        [int32]0x8A150014      = 'NO_APPLICATIONS_FOUND'
+    }
+
+    $name = $names[$normalized]
+    if (-not $name) {
+        $name = "UNKNOWN ($normalized / $hex)"
+    }
+
+    $benign = $normalized -in @(0, [int32]0x8A15002B, [int32]0x8A15004F)
+
+    return [PSCustomObject]@{
+        ExitCode  = $normalized
+        Hex       = $hex
+        Name      = $name
+        IsBenign  = $benign
+        IsSuccess = ($normalized -eq 0)
+    }
+}
+
+function Update-InstallAppsWingetPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = "$machinePath;$userPath"
+    Get-Command winget -ErrorAction SilentlyContinue | Out-Null
+}
+
+function Test-InstallAppsAppInstallerReady {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $exitCode = Invoke-InstallAppsWingetCommand upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
+    $resolved = Resolve-InstallAppsWingetExitCode -ExitCode $exitCode
+    return ($resolved.IsSuccess -or $resolved.IsBenign)
+}
+
+function Repair-InstallAppsWingetAppInstallerElevated {
+    Write-Host '[!] Approve UAC to repair App Installer (winget)...' -ForegroundColor Yellow
+
+    $elevatedCommand = @'
+$ErrorActionPreference = 'Continue'
+function Invoke-InstallAppsWingetCommand {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$WingetArgs)
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { return 0 }
+    $exitCode = 0
+    $null = & winget @WingetArgs 2>&1
+    if ($null -ne $LASTEXITCODE) { $exitCode = $LASTEXITCODE }
+    return $exitCode
+}
+function Resolve-InstallAppsWingetExitCode {
+    param([int]$ExitCode)
+    $bytes = [BitConverter]::GetBytes([int32]$ExitCode)
+    $normalized = [BitConverter]::ToInt32($bytes, 0)
+    $benign = $normalized -in @(0, [int32]0x8A15002B, [int32]0x8A15004F)
+    return [PSCustomObject]@{ IsSuccess = ($normalized -eq 0); IsBenign = $benign }
+}
+$pinEnableExit = Invoke-InstallAppsWingetCommand settings --enable BypassCertificatePinningForMicrosoftStore
+$upgradeExit = Invoke-InstallAppsWingetCommand upgrade Microsoft.AppInstaller --accept-source-agreements --accept-package-agreements --disable-interactivity
+$null = Invoke-InstallAppsWingetCommand settings --disable BypassCertificatePinningForMicrosoftStore
+$resolved = Resolve-InstallAppsWingetExitCode -ExitCode $upgradeExit
+if ($resolved.IsSuccess -or $resolved.IsBenign) { exit 0 }
+exit 1
+'@
+
+    try {
+        $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $elevatedCommand
+        )
+        return ($process.ExitCode -eq 0)
+    } catch {
+        Write-Warning "Elevated winget repair failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Ensure-InstallAppsWingetAppInstaller {
+    Write-Host '[*] Checking App Installer (winget)...' -ForegroundColor DarkGray
+
+    if (Test-InstallAppsAppInstallerReady) {
+        Update-InstallAppsWingetPath
+        Write-Host '[+] App Installer is ready.' -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host '[~] App Installer needs repair — elevating...' -ForegroundColor Yellow
+
+    if (-not (Repair-InstallAppsWingetAppInstallerElevated)) {
+        Write-Host '[!] Could not repair App Installer. Install it from the Microsoft Store and run again.' -ForegroundColor Red
+        return $false
+    }
+
+    if (Test-InstallAppsAppInstallerReady) {
+        Update-InstallAppsWingetPath
+        Write-Host '[+] App Installer repaired.' -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host '[!] App Installer still failing after repair.' -ForegroundColor Red
+    return $false
 }
 
 function Get-SortedInstallCatalogEntries {
@@ -206,64 +333,6 @@ function Test-WingetAvailable {
         return $false
     }
     return $true
-}
-
-function Repair-WinSetupWingetAppInstallerElevated {
-    Write-Host '[!] Approve UAC to repair App Installer (winget)...' -ForegroundColor Yellow
-
-    if (-not (Test-Path -LiteralPath $wingetHelpersPath)) {
-        Write-Warning 'WinSetup-WingetHelpers.ps1 not found — cannot repair App Installer.'
-        return $false
-    }
-
-    $helpersEscaped = $wingetHelpersPath -replace "'", "''"
-    $elevatedCommand = @"
-`$ErrorActionPreference = 'Continue'
-. '$helpersEscaped'
-`$resolved = Invoke-WinSetupAppInstallerUpgradeWithPinBypass
-if (`$resolved.IsSuccess -or `$resolved.IsBenign) { exit 0 }
-exit 1
-"@
-
-    try {
-        $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
-            '-NoProfile'
-            '-ExecutionPolicy'
-            'Bypass'
-            '-Command'
-            $elevatedCommand
-        )
-        return ($process.ExitCode -eq 0)
-    } catch {
-        Write-Warning "Elevated winget repair failed: $($_.Exception.Message)"
-        return $false
-    }
-}
-
-function Ensure-WingetAppInstaller {
-    Write-Host '[*] Checking App Installer (winget)...' -ForegroundColor DarkGray
-
-    if (Test-WinSetupAppInstallerReady) {
-        Update-WinSetupWingetPath
-        Write-Host '[+] App Installer is ready.' -ForegroundColor Green
-        return $true
-    }
-
-    Write-Host '[~] App Installer needs repair — elevating...' -ForegroundColor Yellow
-
-    if (-not (Repair-WinSetupWingetAppInstallerElevated)) {
-        Write-Host '[!] Could not repair App Installer. Install it from the Microsoft Store and run again.' -ForegroundColor Red
-        return $false
-    }
-
-    if (Test-WinSetupAppInstallerReady) {
-        Update-WinSetupWingetPath
-        Write-Host '[+] App Installer repaired.' -ForegroundColor Green
-        return $true
-    }
-
-    Write-Host '[!] App Installer still failing after repair.' -ForegroundColor Red
-    return $false
 }
 
 function Show-InstallSelectionWindow {
@@ -1166,7 +1235,7 @@ function Install-WingetPackage {
 
     & winget @wingetArgs
 
-    $resolved = Resolve-WinSetupWingetExitCode -ExitCode $LASTEXITCODE
+    $resolved = Resolve-InstallAppsWingetExitCode -ExitCode $LASTEXITCODE
     if (-not $resolved.IsSuccess) {
         Write-Host "[!] winget install failed for $Name ($Id). $($resolved.Name) (exit $($resolved.ExitCode))" -ForegroundColor Red
         return $false
@@ -1183,7 +1252,7 @@ if (-not (Test-WingetAvailable)) {
     exit 1
 }
 
-if (-not (Ensure-WingetAppInstaller)) {
+if (-not (Ensure-InstallAppsWingetAppInstaller)) {
     Wait-InstallAppsDismiss
     exit 1
 }

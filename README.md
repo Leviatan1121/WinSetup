@@ -20,7 +20,7 @@ start ms-cxh:localonly
 
 ## How to run
 
-**Option A — BAT** (double-click or cmd). Downloads `WinSetup.ps1` from the release and launches it:
+**Option A — BAT** (double-click or cmd). Downloads `WinSetup.ps1` from the release and launches it. Add `-local` to run from a cloned repo without downloading scripts:
 
 [WinSetup.bat](https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.bat)
 
@@ -32,9 +32,9 @@ irm "https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.
 
 Requires PowerShell 5+ with internet access. If you deny UAC, limited mode runs (no administrator steps).
 
-**Local development:** `.\WinSetup.ps1` from the repo; optional `$env:WINSETUP_LOCAL=1` to use local scripts without downloading assets.
+**Local development:** run `.\WinSetup.ps1 -Local` (or `WinSetup.bat -local`) from the repo so step 3 copies local scripts instead of downloading the GitHub release.
 
-When WinSetup.ps1 finishes, it prompts you to **sign out or reboot** so the performance preset appears correctly in `sysdm.cpl`. After the **first real reboot**, these open automatically:
+When WinSetup.ps1 finishes, press **Enter** once to close the main window. Sign out or **reboot** so the performance preset appears correctly in `sysdm.cpl`. After the **first real reboot**, these open automatically:
 
 1. **Settings → Mouse pointer** (pick a color).
 2. **InstallApps** (graphical software selector).
@@ -43,26 +43,31 @@ When WinSetup.ps1 finishes, it prompts you to **sign out or reboot** so the perf
 
 ## Execution order (WinSetup.ps1)
 
-**Single UAC at start:** if you approve it, the bootstrap window closes and elevated `WinSetup.ps1` is the only main window. Each child script opens its **own window** and waits for **"Press Enter to close this window"** before closing.
+**Single UAC at start:** if you approve it, the bootstrap window closes and elevated `WinSetup.ps1` is the only main window. Each child script opens its **own window** and closes when it finishes (no per-script pause). One **Press Enter to continue** at the very end of the orchestrator.
+
+**Visible steps (admin):** 11. **Limited mode (UAC denied):** 7 visible steps; admin-only steps are skipped silently (banner lists what was skipped).
 
 | # | Phase | Admin | Script / action |
 |---|------|-------|-----------------|
 | 1 | Windows Update Pauser | No | Downloads and runs [WindowsUpdatePauser](https://github.com/Leviatan1121/WindowsUpdatePauser) |
 | 2 | User PATH helpers | No | Creates `%USERPROFILE%\bin`, adds to PATH, `AllowFile.bat` / `AllowProcess.bat` |
-| 3 | Download release assets | No | GitHub release → `%TEMP%\WinSetup` |
+| 3 | Download release assets | No | Scripts needed for this run (limited: 8 files; admin: +5 more; cached files skipped) |
 | 4 | Configure | No | `Configure.ps1` |
 | 5 | Privacy | No | `Privacy.ps1` |
 | 6 | Performance (user) | No | `Performance.ps1` |
-| 7 | Winget upgrade | **Yes** | `WinSetup-WingetUpgrade.ps1` (includes certificate pinning restore at end) |
+| 7 | Winget upgrade | **Yes** | `WinSetup-WingetUpgrade.ps1` |
 | 8 | Debloat | **Yes** | `Debloat.ps1 -WinSetupElevated` |
 | 9 | Performance (system) | **Yes** | `Performance.ps1 -SystemOnly` |
-| 10 | Post-reboot hooks | No | `Install-MousePointerPrompt.ps1 -Register` |
-| 11 | Post-reboot hooks | No | `Install-AppsPrompt.ps1 -Register` |
-| 12 | Remote support | **Yes** | `RemoteSupport.ps1` (optional, interactive) |
+| 10 | Shell refresh | No | Restarts Explorer + Start (orchestrator inline step) |
+| 11 | Remote support | **Yes** | `RemoteSupport.ps1` (optional, interactive) |
+
+**Silent (no step header):** post-reboot hooks — `Install-MousePointerPrompt.ps1` and `Install-AppsPrompt.ps1` run hidden (`-Register`) after step 9 in admin mode, or after step 6 in limited mode.
 
 ### Limited mode (UAC denied)
 
-If you deny UAC, the main window continues in **Limited** mode and runs steps **1–6** and **10–11**. Steps **7–9** and **12** are skipped with an explicit notice: winget upgrade, Debloat, Performance (system), and Remote Support. Re-run WinSetup (`.bat` or the PowerShell one-liner) and approve UAC to complete those steps.
+If you deny UAC, the main window continues in **Limited** mode and runs visible steps **1–6** and **10** (Shell refresh). Steps **7–9** and **11** are skipped; post-reboot hooks still register silently. Re-run WinSetup (`.bat` or the PowerShell one-liner) and approve UAC to complete admin steps — step 3 then downloads only the missing admin scripts (already cached files are skipped).
+
+**Errors:** non-zero step results and `Write-Warning` output from child scripts are appended to `%TEMP%\WinSetup\WinSetup-errors.log` (cleared at each run). If anything was logged, the final banner is **red** and prints the log path and contents; otherwise the yellow “Baseline complete” banner is shown.
 
 The `%TEMP%\WinSetup` folder (setup downloads) is deleted on the **first reboot**, when `Open-MousePointerSettings.ps1` runs — so cleanup is not lost if Remote Support prompts for a reboot before WinSetup finishes.
 
@@ -251,8 +256,7 @@ Feedback Hub, Weather, Phone Link, Family Safety, Get Started, Journal, Microsof
 ### Windows Update → Delivery Optimization
 - HTTP only; no P2P cache or upload to other PCs.
 
-### At the end
-- Restarts **Explorer** and StartMenuExperienceHost.
+During Debloat, Explorer is stopped briefly for taskbar/start layout changes. A **single shell refresh** runs later in the orchestrator (step 10), not at the end of `Debloat.ps1`.
 
 **Verify:** debloated apps do not appear in Start; no widgets; no Copilot; no OneDrive; search without web; `python` does not open Store; minimal telemetry in Policies.
 
@@ -273,18 +277,19 @@ Any other key skips.
 
 ## 8. After WinSetup — before reboot
 
-Final messages indicate:
-- Sign out or reboot (performance in `sysdm.cpl`).
-- After reboot: mouse pointer + InstallApps.
+**Success:** yellow banner — baseline complete; reboot for mouse pointer + InstallApps.
+
+**Errors:** red banner — `%TEMP%\WinSetup\WinSetup-errors.log` path and full log printed in the console. Execution continues step-by-step; reboot post-reboot prompts may still run.
 
 Persistent files until post-reboot:
 
 | Path | Purpose |
 |------|---------|
-| `%TEMP%\WinSetup\` | Setup downloads (deleted on first reboot) |
-| `%LOCALAPPDATA%\WinSetup\` | Scripts and temporary markers |
+| `%TEMP%\WinSetup\` | Setup downloads + error log (deleted on first reboot) |
+| `%LOCALAPPDATA%\WinSetup\` | Post-reboot scripts and markers |
 | `HKCU\...\Run\WinSetup-MousePointerSettings` | Opens pointer settings after reboot |
 | `HKCU\...\Run\WinSetup-InstallApps` | Launches InstallApps after reboot |
+| `%ProgramData%\WinSetup\` | Anti-AI cleanup script + scheduled task (if Debloat ran) |
 
 ---
 
@@ -301,9 +306,12 @@ Persistent files until post-reboot:
 
 ## 10. Post-reboot — InstallApps (`InstallApps.ps1`)
 
+### Winget (self-contained)
+- Checks App Installer before the GUI; on failure, elevates once to repair (pinning bypass + upgrade), same pattern as WinSetup step 7 but **implemented inside `InstallApps.ps1`** (no dependency on `WinSetup-WingetHelpers.ps1`).
+
 ### Interface
 - Dark WPF window with categories, name search, and selection counter.
-- Requires **winget**.
+- Requires **winget** (see above).
 
 ### Installation types
 
@@ -327,9 +335,9 @@ Communication, Browsers, Gaming, Streaming, Design, AI, Utilities, Graphics, Dev
 
 ### When finished
 - Summary: `Installed X of Y app(s)`.
-- Finish time + **Enter to close** the console.
+- **Press Enter to close** the console.
 
-After running, deletes `InstallApps.ps1`, marker, Run hook, and `Open-InstallApps.ps1`.
+After running, `Open-InstallApps.ps1` deletes `InstallApps.ps1`, the marker, the Run hook, itself, and `%TEMP%\WinSetup-Install\` (direct-download cache). `InstallApps.ps1` does not remove itself.
 
 **Verify:** chosen apps installed; `node -v`, `python --version`, `go version` if you selected mise (Python should not open the Store thanks to Debloat).
 
@@ -359,19 +367,20 @@ Use this in order:
 
 | File | Role |
 |------|------|
-| `WinSetup.bat` | Stub: downloads `WinSetup.ps1` from release and runs it |
-| `WinSetup.ps1` | Main orchestrator (1 UAC, single main window); also via PowerShell one-liner (`irm … | iex`) |
-| `WinSetup-Process.ps1` | Optional/legacy: child-window and Limited-task helpers |
-| `WinSetup-WingetHelpers.ps1` | Shared winget helpers (version queries, exit codes, silent uninstall) |
-| `WinSetup-WingetUpgrade.ps1` | Upgrades App Installer (admin); restores certificate pinning at end |
-| `WinSetup-WingetRestorePinning.ps1` | Legacy (pinning restore is in step 7 upgrade script) |
+| `WinSetup.bat` | Stub: downloads `WinSetup.ps1` from release and runs it; `-local` runs from repo |
+| `WinSetup.ps1` | Main orchestrator (1 UAC, single main window); also via PowerShell one-liner (`irm` / `iex`) |
+| `WinSetup-WingetHelpers.ps1` | Shared winget helpers for Setup / Debloat / AI cleanup |
+| `WinSetup-WingetUpgrade.ps1` | Upgrades App Installer (admin step 7) |
+| `WinSetup-AI-UpdateCleanup.ps1` | Anti-AI removal + post-update task (via Debloat) |
 | `Configure.ps1` | Appearance and shell (HKCU) |
 | `Privacy.ps1` | User privacy (HKCU) |
 | `Performance.ps1` | Visual performance + gaming (HKCU / HKLM) |
 | `Debloat.ps1` | System removals and policies |
 | `RemoteSupport.ps1` | Optional Quick Assist / RDP |
-| `Install-MousePointerPrompt.ps1` | Registers pointer hook |
-| `Open-MousePointerSettings.ps1` | Post-reboot pointer runner; cleans `%TEMP%\WinSetup` |
-| `Install-AppsPrompt.ps1` | Registers InstallApps hook |
-| `Open-InstallApps.ps1` | Post-reboot InstallApps runner |
-| `InstallApps.ps1` | Software selector and installer (release; may be in local `.gitignore`) |
+| `Install-MousePointerPrompt.ps1` | Registers pointer hook (silent) |
+| `Open-MousePointerSettings.ps1` | Post-reboot pointer runner; cleans `%TEMP%\WinSetup` (fault-tolerant) |
+| `Install-AppsPrompt.ps1` | Registers InstallApps hook (silent) |
+| `Open-InstallApps.ps1` | Post-reboot InstallApps runner; removes `InstallApps.ps1` + cache after exit |
+| `InstallApps.ps1` | Software selector and installer (self-contained winget logic) |
+
+**Adding a new script:** add it to the step manifest in `WinSetup.ps1` (and to `Get-WinSetupScriptDependencies` / `Get-WinSetupHookPayloads` if it is dot-sourced or copied by a hook). Step 3 derives its download list from that manifest — the GitHub workflow still publishes all `*.ps1` in the repo.

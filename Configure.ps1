@@ -27,18 +27,12 @@ Set-ItemProperty -Path $mousePath -Name 'MouseThreshold1' -Value '0'
 Set-ItemProperty -Path $mousePath -Name 'MouseThreshold2' -Value '0'
 [void][WinSetupMouse]::SystemParametersInfo([WinSetupMouse]::SPI_SETMOUSE, 0, [int[]]@(0, 0, 0), 0x03)
 [void][WinSetupMouse]::SystemParametersInfo([WinSetupMouse]::SPI_SETCURSORSIZE, 0, [uint32]64, [WinSetupMouse]::SPIF_UPDATEINIFILE)
-
-$promptInstaller = Join-Path $PSScriptRoot 'Install-MousePointerPrompt.ps1'
-if (Test-Path $promptInstaller) {
-    . $promptInstaller
-    Remove-WinSetupCursorLegacy
-}
 #endregion
 
 #region Personalization > Themes > Dark theme
 Write-Host '[*] Dark theme...' -ForegroundColor DarkGray
 Start-Process -FilePath "C:\Windows\Resources\Themes\dark.theme" -Wait
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 1.5
 Get-Process -Name "SystemSettings" -ErrorAction SilentlyContinue | Stop-Process -Force
 #endregion
 

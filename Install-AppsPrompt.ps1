@@ -1,5 +1,5 @@
 # Post-reboot hook: copies InstallApps.ps1 + Open-InstallApps.ps1 to %LOCALAPPDATA%\WinSetup
-# and registers the runner in HKCU\...\Run. Runs once silently from WinSetup.ps1 (-Register).
+# (InstallApps.ps1 includes its own winget logic). Runs silently from WinSetup.ps1 (-Register).
 
 param(
     [switch]$Register,

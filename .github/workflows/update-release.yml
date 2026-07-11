@@ -1,4 +1,4 @@
-name: Actualizar Release Fija
+name: Update pinned release
 
 on:
   push:
@@ -13,19 +13,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Descargar el código del repositorio
-      - name: Checkout del código
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Actualizar la Release existente con los nuevos archivos
-      - name: Actualizar Release Fija
+      - name: Update pinned release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.0.1
-          name: Versión Estable
+          name: Stable release
           body: |
-            Última actualización automática de los scripts de PowerShell.
-            Último commit: ${{ github.sha }}
+            Automatic update of PowerShell setup scripts.
+            Latest commit: ${{ github.sha }}
           draft: false
           prerelease: false
           fail_on_unmatched_files: false

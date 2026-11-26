@@ -590,8 +590,12 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     }
 
     try {
-        $proc = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ArgumentList $elevArgs
-        if ($proc) { exit 0 }
+        Write-Host '[*] Approve UAC to continue in the administrator window...' -ForegroundColor DarkGray
+        $proc = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -Wait -ArgumentList $elevArgs
+        if ($null -eq $proc) {
+            exit 1
+        }
+        exit $proc.ExitCode
     } catch { }
 
     $OrchestratorMode = 'Limited'

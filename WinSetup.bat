@@ -11,7 +11,7 @@ if defined LOCAL_ARG (
   set "SCRIPT_DIR=%~dp0"
   if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
   powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\WinSetup.ps1" -Local -ScriptDir "%SCRIPT_DIR%"
-  exit /b %ERRORLEVEL%
+  goto :afterrun
 )
 
 set "SCRIPT_DIR=%TEMP%\WinSetup"
@@ -38,7 +38,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "if (-not $ok) {" ^
   "  try { $wc=New-Object System.Net.WebClient; $wc.Headers.Add('User-Agent','WinSetup'); $wc.DownloadFile($url,$dest); $ok=(Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -gt 0 } catch { }" ^
   "}" ^
-  "if (-not $ok) { Write-Host '[!] Could not download WinSetup.ps1. Check network, proxy, or try again later.' -ForegroundColor Red; exit 1 }" ^
-  "& $dest -ScriptDir '%SCRIPT_DIR%'"
+  "if (-not $ok) { Write-Host '[!] Could not download WinSetup.ps1. Check network, proxy, or try again later.' -ForegroundColor Red; exit 1 }"
 
-exit /b %ERRORLEVEL%
+if errorlevel 1 goto :failed
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%WS_DEST%" -ScriptDir "%SCRIPT_DIR%"
+
+:afterrun
+set "ERR=%ERRORLEVEL%"
+if not "%ERR%"=="0" goto :failed
+exit /b 0
+
+:failed
+echo.
+echo WinSetup failed (exit %ERR%). See messages above.
+pause
+exit /b %ERR%

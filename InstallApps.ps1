@@ -313,17 +313,24 @@ function ConvertTo-InstallPackageArray {
         $Selection
     )
 
-    if ($null -eq $Selection) {
-        return @()
+    $packages = [System.Collections.Generic.List[object]]::new()
+    if ($null -ne $Selection) {
+        # A lone package is a hashtable. foreach would walk its keys, so keep the package whole.
+        $items = if ($Selection -is [System.Collections.IDictionary]) {
+            ,$Selection
+        } else {
+            @($Selection)
+        }
+
+        foreach ($item in $items) {
+            if ($item -is [System.Collections.IDictionary]) {
+                $packages.Add($item)
+            }
+        }
     }
 
-    # PowerShell unwraps single-element arrays from functions; a lone package arrives as one hashtable.
-    # @($hashtable) enumerates keys (Count = 2+), not the package — detect and re-wrap.
-    if ($Selection -is [hashtable] -and $Selection.ContainsKey('Name')) {
-        return ,@($Selection)
-    }
-
-    return @($Selection)
+    # Without the comma, a one-package result is unwrapped to the hashtable and .Count is its key count.
+    return ,$packages.ToArray()
 }
 
 function Test-WingetAvailable {
@@ -950,12 +957,8 @@ function Show-InstallSelectionWindow {
         return ,@()
     }
 
-    return ,@(
-        $script:InstallUi.AppTiles |
-            Where-Object { $_.IsSelected } |
-            Sort-Object { $_.Package.Name } |
-            ForEach-Object { $_.Package }
-    )
+    # InstallUi is released above. The Install click already snapshotted the selection.
+    return ,@($script:SelectedPackages)
 }
 
 function Install-DownloadedPackage {
@@ -1141,9 +1144,13 @@ function Install-MiseTool {
     Initialize-MiseEnvironment | Out-Null
 
     Write-Host "[*] Installing $Name with mise ($Tool)..." -ForegroundColor DarkGray
-    & $miseExe use --global $Tool
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[!] mise use --global $Tool failed. Exit code:" $LASTEXITCODE -ForegroundColor Red
+    $miseOutput = & $miseExe use --global $Tool 2>&1
+    $miseExit = $LASTEXITCODE
+    if ($miseOutput) {
+        $miseOutput | Out-Host
+    }
+    if ($miseExit -ne 0) {
+        Write-Host "[!] mise use --global $Tool failed. Exit code:" $miseExit -ForegroundColor Red
         return $false
     }
 
@@ -1187,13 +1194,13 @@ function Install-SelectedPackage {
         return Install-MiseTool -Name $Package.Name -Tool $Package.MiseTool
     }
 
-    $installed = if ($Package.InstallerUrl) {
+    $didInstall = if ($Package.InstallerUrl) {
         Install-DownloadedPackage -Package $Package
     } else {
         Install-WingetPackage -Id $Package.Id -Name $Package.Name -Source $Package.Source
     }
 
-    if (-not $installed) {
+    if (-not $didInstall) {
         return $false
     }
 
@@ -1233,9 +1240,14 @@ function Install-WingetPackage {
         $wingetArgs += @('-e', '--silent')
     }
 
-    & winget @wingetArgs
+    # Capture stdout so a failed install's text cannot make the boolean return look true.
+    $wingetOutput = & winget @wingetArgs 2>&1
+    $wingetExit = $LASTEXITCODE
+    if ($wingetOutput) {
+        $wingetOutput | Out-Host
+    }
 
-    $resolved = Resolve-InstallAppsWingetExitCode -ExitCode $LASTEXITCODE
+    $resolved = Resolve-InstallAppsWingetExitCode -ExitCode $wingetExit
     if (-not $resolved.IsSuccess) {
         Write-Host "[!] winget install failed for $Name ($Id). $($resolved.Name) (exit $($resolved.ExitCode))" -ForegroundColor Red
         return $false

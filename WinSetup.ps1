@@ -240,6 +240,20 @@ function Save-WinSetupReleaseFile {
     $lastException = $null
 
     try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            try {
+                & curl.exe -fsSL -A 'WinSetup' -o $Destination $Uri 2>$null
+                if ((Test-Path -LiteralPath $Destination) -and (Get-Item -LiteralPath $Destination).Length -gt 0) {
+                    return
+                }
+            } catch {
+                $lastException = $_.Exception
+                if (Test-Path -LiteralPath $Destination) {
+                    Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
         for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try {
                 Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing -Headers $headers

@@ -39,6 +39,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  try { $wc=New-Object System.Net.WebClient; $wc.Headers.Add('User-Agent','WinSetup'); $wc.DownloadFile($url,$dest); $ok=(Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -gt 0 } catch { }" ^
   "}" ^
   "if (-not $ok) { Write-Host '[!] Could not download WinSetup.ps1. Check network, proxy, or try again later.' -ForegroundColor Red; exit 1 }" ^
-  "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dest -ScriptDir '%SCRIPT_DIR%'"
+  "& $dest -ScriptDir '%SCRIPT_DIR%'"
 
 exit /b %ERRORLEVEL%

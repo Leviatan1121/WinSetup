@@ -3,8 +3,37 @@
 param(
     [string]$OrchestratorMode,
     [string]$ScriptDir,
-    [switch]$Local
+    [switch]$Local,
+    [string]$LocalSourceDir
 )
+
+function Resolve-WinSetupLocalSourceDir {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    $trimmed = $Path.Trim().Trim('"').TrimEnd([char[]]@('\', '/'))
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        return $null
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($trimmed)
+    } catch {
+        Write-Warning "Invalid LocalSourceDir: $Path ($($_.Exception.Message))"
+        return $null
+    }
+}
+
+if ($LocalSourceDir) {
+    $script:WinSetupLocalSourceDir = Resolve-WinSetupLocalSourceDir -Path $LocalSourceDir
+} elseif ($Local.IsPresent -and $PSCommandPath) {
+    $script:WinSetupLocalSourceDir = Resolve-WinSetupLocalSourceDir -Path (Split-Path -Parent $PSCommandPath)
+} else {
+    $script:WinSetupLocalSourceDir = $null
+}
 
 if ($OrchestratorMode -and $OrchestratorMode -notin 'Elevated', 'Limited') {
     Write-Error "Invalid OrchestratorMode: $OrchestratorMode"
@@ -132,78 +161,28 @@ function Test-WinSetupErrorLogHasContent {
     return -not [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $Path -Raw))
 }
 
+function Get-WinSetupProcessExitCode {
+    param([System.Diagnostics.Process]$Process)
+    if ($null -eq $Process) { return 1 }
+    if ($null -eq $Process.ExitCode) { return 0 }
+    return $Process.ExitCode
+}
+
 function Get-WinSetupChildPs1LaunchArgs {
     param(
         [Parameter(Mandatory = $true)]
         [string]$TargetPath,
-        [string[]]$ArgumentList = @(),
-        [string]$WarningLogPath
+        [string[]]$ArgumentList = @()
     )
 
-    $targetEscaped = $TargetPath -replace "'", "''"
+    $psLaunchArgs = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', $TargetPath
+    )
     if ($ArgumentList -and $ArgumentList.Count -gt 0) {
-        $escapedArgs = ($ArgumentList | ForEach-Object { "'$($_ -replace "'", "''")'" }) -join ', '
-        $invokeLine = "& '$targetEscaped' @($escapedArgs)"
-    } else {
-        $invokeLine = "& '$targetEscaped'"
+        $psLaunchArgs += $ArgumentList
     }
-
-    $warningCapture = ''
-    $warnLogEscaped = ''
-    if ($WarningLogPath) {
-        $warnLogEscaped = $WarningLogPath -replace "'", "''"
-        $warningCapture = @"
-
-    foreach (`$item in `$output) {
-        if (`$item -is [System.Management.Automation.WarningRecord]) {
-            [void]`$warnLines.Add([string]`$item.Message)
-        } elseif (`$item -is [System.Management.Automation.ErrorRecord]) {
-            if (`$code -eq 0) { `$code = 1 }
-            [void]`$warnLines.Add("ERROR: `$(`$item.Exception.Message)")
-        }
-    }
-    if (`$warnLines.Count -gt 0) {
-        Set-Content -LiteralPath '$warnLogEscaped' -Value (`$warnLines) -Encoding UTF8
-    }
-"@
-    }
-
-    $command = @"
-`$ErrorActionPreference = 'Continue'
-`$WarningPreference = 'Continue'
-`$code = 0
-`$warnLines = [System.Collections.Generic.List[string]]::new()
-try {
-    `$output = & {
-        $invokeLine
-    } *>&1
-$warningCapture
-} catch {
-    `$code = 1
-    if ('$warnLogEscaped') {
-        Set-Content -LiteralPath '$warnLogEscaped' -Value @(`$_.Exception.Message) -Encoding UTF8
-    }
-}
-exit `$code
-"@
-
-    return @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $command)
-}
-
-function Read-WinSetupChildWarningLog {
-    param([string]$WarningLogPath)
-
-    if (-not $WarningLogPath -or -not (Test-Path -LiteralPath $WarningLogPath)) {
-        return @()
-    }
-
-    try {
-        $lines = @(Get-Content -LiteralPath $WarningLogPath -ErrorAction Stop)
-        Remove-Item -LiteralPath $WarningLogPath -Force -ErrorAction SilentlyContinue
-        return $lines
-    } catch {
-        return @()
-    }
+    return $psLaunchArgs
 }
 
 function Initialize-WinSetupHttpTls {
@@ -337,16 +316,15 @@ function Start-WinSetupUserContextProcess {
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [string]$WorkingDirectory,
-        [string]$WarningLogPath
+        [string]$WorkingDirectory
     )
 
     if ($FilePath -like '*.ps1') {
-        $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList -WarningLogPath $WarningLogPath
+        $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $FilePath -ArgumentList $ArgumentList
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
         return @{
-            ExitCode = $proc.ExitCode
-            Warnings = @(Read-WinSetupChildWarningLog -WarningLogPath $WarningLogPath)
+            ExitCode = (Get-WinSetupProcessExitCode -Process $proc)
+            Warnings = @()
         }
     }
 
@@ -386,8 +364,7 @@ function Start-WinSetupChildProcess {
         [string]$TargetPath,
         [string[]]$ArgumentList = @(),
         [string]$WorkingDirectory,
-        [bool]$OrchestratorIsAdmin,
-        [string]$WarningLogPath
+        [bool]$OrchestratorIsAdmin
     )
 
     if (-not (Test-Path -LiteralPath $TargetPath)) {
@@ -396,18 +373,18 @@ function Start-WinSetupChildProcess {
 
     if ($Level -eq 'Elevated') {
         if ($TargetPath -like '*.ps1') {
-            $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList -WarningLogPath $WarningLogPath
+            $psArgs = Get-WinSetupChildPs1LaunchArgs -TargetPath $TargetPath -ArgumentList $ArgumentList
             $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs -WorkingDirectory $WorkingDirectory -Wait -PassThru
             return @{
-                ExitCode = $proc.ExitCode
-                Warnings = @(Read-WinSetupChildWarningLog -WarningLogPath $WarningLogPath)
+                ExitCode = (Get-WinSetupProcessExitCode -Process $proc)
+                Warnings = @()
             }
         }
         $proc = Start-Process -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Wait -PassThru
-        return @{ ExitCode = $proc.ExitCode; Warnings = @() }
+        return @{ ExitCode = (Get-WinSetupProcessExitCode -Process $proc); Warnings = @() }
     }
 
-    return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WarningLogPath $WarningLogPath
+    return Start-WinSetupUserContextProcess -FilePath $TargetPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
 }
 
 function Install-WinSetupUserPathHelpers {
@@ -509,6 +486,39 @@ function Get-WinSetupReleaseAssets {
     return @($assets) | Sort-Object
 }
 
+function Clear-WinSetupScriptDirAssets {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Dir,
+        [Parameter(Mandatory = $true)]
+        [bool]$IncludeAdminOnly
+    )
+
+    if (-not (Test-Path -LiteralPath $Dir)) {
+        return
+    }
+
+    $runningOrchestrator = $null
+    if ($PSCommandPath) {
+        $runningOrchestrator = [System.IO.Path]::GetFullPath($PSCommandPath)
+    }
+
+    foreach ($file in (Get-WinSetupReleaseAssets -IncludeAdminOnly:$IncludeAdminOnly)) {
+        Remove-Item -LiteralPath (Join-Path $Dir $file) -Force -ErrorAction SilentlyContinue
+    }
+
+    $staleOrchestrator = Join-Path $Dir 'WinSetup.ps1'
+    if (Test-Path -LiteralPath $staleOrchestrator) {
+        $staleFull = [System.IO.Path]::GetFullPath($staleOrchestrator)
+        if (-not $runningOrchestrator -or -not $staleFull.Equals($runningOrchestrator, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $staleOrchestrator -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Get-ChildItem -LiteralPath $Dir -Filter '.winsetup-warnings-*.log' -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 function Save-WinSetupReleaseAssets {
     param(
         [Parameter(Mandatory = $true)]
@@ -529,8 +539,13 @@ function Save-WinSetupReleaseAssets {
     foreach ($file in (Get-WinSetupReleaseAssets -IncludeAdminOnly:$IncludeAdminOnly)) {
         $dest = Join-Path $Dir $file
 
-        if ($useLocal -and $PSScriptRoot) {
-            $localSource = Join-Path $PSScriptRoot $file
+        $localRoot = $script:WinSetupLocalSourceDir
+        if (-not $localRoot -and $useLocal -and $PSScriptRoot) {
+            $localRoot = $PSScriptRoot
+        }
+
+        if ($useLocal -and $localRoot) {
+            $localSource = Join-Path $localRoot $file
             if (Test-Path -LiteralPath $localSource) {
                 $destFull = [System.IO.Path]::GetFullPath($dest)
                 $srcFull = [System.IO.Path]::GetFullPath($localSource)
@@ -544,12 +559,6 @@ function Save-WinSetupReleaseAssets {
                 $downloaded++
                 continue
             }
-        }
-
-        if (-not $useLocal -and (Test-Path -LiteralPath $dest)) {
-            Write-WinSetupProgressLine ($ProgressLabel -f "$file (cached)")
-            $skipped++
-            continue
         }
 
         Write-WinSetupProgressLine ($ProgressLabel -f $file)
@@ -591,6 +600,14 @@ if ([string]::IsNullOrWhiteSpace($OrchestratorMode)) {
     )
     if ($Local.IsPresent) {
         $elevArgs += '-Local'
+        $localSrc = $script:WinSetupLocalSourceDir
+        if (-not $localSrc -and $PSCommandPath) {
+            $localSrc = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
+        }
+        if ($localSrc) {
+            $elevArgs += '-LocalSourceDir'
+            $elevArgs += $localSrc
+        }
     }
 
     try {
@@ -671,6 +688,10 @@ foreach ($step in $steps) {
                 switch ($step.Id) {
                     'PathHelpers' { Install-WinSetupUserPathHelpers }
                     'Download' {
+                        if ($Local.IsPresent -and $script:WinSetupLocalSourceDir) {
+                            Write-Host "[*] Local sources: $($script:WinSetupLocalSourceDir) -> $ScriptDir" -ForegroundColor DarkGray
+                        }
+                        Clear-WinSetupScriptDirAssets -Dir $ScriptDir -IncludeAdminOnly:$orchestratorIsAdmin
                         $downloadStats = Save-WinSetupReleaseAssets -Dir $ScriptDir -IncludeAdminOnly:$orchestratorIsAdmin
                         if ($downloadStats.Failed -gt 0) {
                             $exitCode = 1
@@ -688,24 +709,15 @@ foreach ($step in $steps) {
                     $exitCode = 1
                     $stepErrors.Add("Script not found: $scriptPath")
                 } else {
-                    $args = @()
-                    if ($step.Args) { $args += $step.Args }
-                    $warningLogPath = Join-Path $ScriptDir ".winsetup-warnings-$([guid]::NewGuid().ToString('N')).log"
+                    $childArgs = @()
+                    if ($step.Args) { $childArgs += $step.Args }
                     $childResult = Start-WinSetupChildProcess `
                         -Level $step.Level `
                         -TargetPath $scriptPath `
-                        -ArgumentList $args `
+                        -ArgumentList $childArgs `
                         -WorkingDirectory $ScriptDir `
-                        -OrchestratorIsAdmin $orchestratorIsAdmin `
-                        -WarningLogPath $warningLogPath
+                        -OrchestratorIsAdmin $orchestratorIsAdmin
                     $exitCode = $childResult.ExitCode
-                    foreach ($warning in $childResult.Warnings) {
-                        if ($warning -match '^ERROR:\s*(.+)$') {
-                            $stepErrors.Add($Matches[1])
-                        } else {
-                            $stepErrors.Add("WARNING: $warning")
-                        }
-                    }
                 }
             }
         }

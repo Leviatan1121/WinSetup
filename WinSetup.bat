@@ -40,6 +40,8 @@ goto end
 
 :runlocal
 set "SCRIPT_DIR=%TEMP%\WinSetup"
+set "REPO_DIR=%~dp0"
+if "%REPO_DIR:~-1%"=="\" set "REPO_DIR=%REPO_DIR:~0,-1%"
 if not exist "%SCRIPT_DIR%" mkdir "%SCRIPT_DIR%"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0WinSetup.ps1" -Local -ScriptDir "%SCRIPT_DIR%"

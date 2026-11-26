@@ -32,7 +32,7 @@ irm "https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.
 
 Requires PowerShell 5+ with internet access. If you deny UAC, limited mode runs (no administrator steps).
 
-**Local development:** run `.\WinSetup.ps1 -Local` (or `WinSetup.bat -local`) from the repo. Step 3 copies scripts from the repo into `%TEMP%\WinSetup` (same layout as the release path).
+**Local development:** run `.\WinSetup.ps1 -Local` (or `WinSetup.bat -local`) from the repo. Step 3 copies scripts from the repo into `%TEMP%\WinSetup` (use `-LocalSourceDir` if the orchestrator itself is not in the repo). Optional: `-LocalSourceDir 'C:\path\to\WinSetup'`.
 
 When WinSetup.ps1 finishes, press **Enter** once to close the main window. Sign out or **reboot** so the performance preset appears correctly in `sysdm.cpl`. After the **first real reboot**, these open automatically:
 
@@ -51,7 +51,7 @@ When WinSetup.ps1 finishes, press **Enter** once to close the main window. Sign 
 |---|------|-------|-----------------|
 | 1 | Windows Update Pauser | No | Downloads and runs [WindowsUpdatePauser](https://github.com/Leviatan1121/WindowsUpdatePauser) |
 | 2 | User PATH helpers | No | Creates `%USERPROFILE%\bin`, adds to PATH, `AllowFile.bat` / `AllowProcess.bat` |
-| 3 | Download release assets | No | Scripts needed for this run (limited: 8 files; admin: +5 more; cached files skipped) |
+| 3 | Download release assets | No | Clears stale files in `%TEMP%\WinSetup`, then downloads or copies scripts for this run |
 | 4 | Configure | No | `Configure.ps1` |
 | 5 | Privacy | No | `Privacy.ps1` |
 | 6 | Performance (user) | No | `Performance.ps1` |
@@ -65,9 +65,9 @@ When WinSetup.ps1 finishes, press **Enter** once to close the main window. Sign 
 
 ### Limited mode (UAC denied)
 
-If you deny UAC, the main window continues in **Limited** mode and runs visible steps **1–6** and **10** (Shell refresh). Steps **7–9** and **11** are skipped; post-reboot hooks still register silently. Re-run WinSetup (`.bat` or the PowerShell one-liner) and approve UAC to complete admin steps — step 3 then downloads only the missing admin scripts (already cached files are skipped).
+If you deny UAC, the main window continues in **Limited** mode and runs visible steps **1–6** and **10** (Shell refresh). Steps **7–9** and **11** are skipped; post-reboot hooks still register silently. Re-run WinSetup (`.bat` or the PowerShell one-liner) and approve UAC to complete admin steps — step 3 fetches the admin-only scripts on that run.
 
-**Errors:** non-zero step results and `Write-Warning` output from child scripts are appended to `%TEMP%\WinSetup\WinSetup-errors.log` (cleared at each run). If anything was logged, the final banner is **red** and prints the log path and contents; otherwise the yellow “Baseline complete” banner is shown.
+**Errors:** non-zero step results are appended to `%TEMP%\WinSetup\WinSetup-errors.log` (cleared at each run). If anything was logged, the final banner is **red** and prints the log path and contents; otherwise the yellow “Baseline complete” banner is shown.
 
 The `%TEMP%\WinSetup` folder (setup downloads) is deleted on the **first reboot**, when `Open-MousePointerSettings.ps1` runs — so cleanup is not lost if Remote Support prompts for a reboot before WinSetup finishes.
 

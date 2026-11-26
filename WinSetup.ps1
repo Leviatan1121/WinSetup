@@ -44,9 +44,6 @@ function Test-WinSetupUseLocal {
 }
 
 function Get-WinSetupDefaultScriptDir {
-    if (Test-WinSetupUseLocal) {
-        return $PSScriptRoot
-    }
     return Join-Path $env:TEMP 'WinSetup'
 }
 
@@ -535,6 +532,13 @@ function Save-WinSetupReleaseAssets {
         if ($useLocal -and $PSScriptRoot) {
             $localSource = Join-Path $PSScriptRoot $file
             if (Test-Path -LiteralPath $localSource) {
+                $destFull = [System.IO.Path]::GetFullPath($dest)
+                $srcFull = [System.IO.Path]::GetFullPath($localSource)
+                if ($srcFull.Equals($destFull, [StringComparison]::OrdinalIgnoreCase)) {
+                    Write-WinSetupProgressLine ($ProgressLabel -f "$file (local, skip)")
+                    $skipped++
+                    continue
+                }
                 Write-WinSetupProgressLine ($ProgressLabel -f "$file (local)")
                 Copy-Item -LiteralPath $localSource -Destination $dest -Force
                 $downloaded++

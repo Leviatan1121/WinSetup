@@ -32,7 +32,7 @@ irm "https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.
 
 Requires PowerShell 5+ with internet access. If you deny UAC, limited mode runs (no administrator steps).
 
-**Local development:** run `.\WinSetup.ps1 -Local` (or `WinSetup.bat -local`) from the repo so step 3 copies local scripts instead of downloading the GitHub release.
+**Local development:** run `.\WinSetup.ps1 -Local` (or `WinSetup.bat -local`) from the repo. Step 3 copies scripts from the repo into `%TEMP%\WinSetup` (same layout as the release path).
 
 When WinSetup.ps1 finishes, press **Enter** once to close the main window. Sign out or **reboot** so the performance preset appears correctly in `sysdm.cpl`. After the **first real reboot**, these open automatically:
 
@@ -367,6 +367,7 @@ Use this in order:
 
 | File | Role |
 |------|------|
+| `WinSetup-BootstrapDownload.ps1` | `WinSetup.bat` network path: downloads `WinSetup.ps1` from release |
 | `WinSetup.bat` | Stub: downloads `WinSetup.ps1` from release and runs it; `-local` runs from repo |
 | `WinSetup.ps1` | Main orchestrator (1 UAC, single main window); also via PowerShell one-liner (`irm` / `iex`) |
 | `WinSetup-WingetHelpers.ps1` | Shared winget helpers for Setup / Debloat / AI cleanup |

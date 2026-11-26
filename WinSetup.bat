@@ -1,56 +1,59 @@
 @echo off
 title WinSetup
+setlocal
 
 :: WinSetup bootstrap — downloads WinSetup.ps1 from GitHub release and runs it.
 :: Optional dev only: WinSetup.bat -local
 
-set "LOCAL_ARG="
-if /I "%~1"=="-local" set "LOCAL_ARG=1"
-
-if defined LOCAL_ARG (
-  set "SCRIPT_DIR=%~dp0"
-  if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\WinSetup.ps1" -Local -ScriptDir "%SCRIPT_DIR%"
-  goto :afterrun
-)
+if /I "%~1"=="-local" goto runlocal
 
 set "SCRIPT_DIR=%TEMP%\WinSetup"
 if not exist "%SCRIPT_DIR%" mkdir "%SCRIPT_DIR%"
 
 set "WS_URL=https://github.com/Leviatan1121/WinSetup/releases/latest/download/WinSetup.ps1"
+set "WS_BASE=https://github.com/Leviatan1121/WinSetup/releases/latest/download"
 set "WS_DEST=%SCRIPT_DIR%\WinSetup.ps1"
+set "DOWNLOADER=%SCRIPT_DIR%\WinSetup-BootstrapDownload.ps1"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';" ^
-  "$ProgressPreference='SilentlyContinue';" ^
-  "Write-Host '[*] Downloading WinSetup.ps1...' -ForegroundColor DarkGray;" ^
-  "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }" ^
-  "$url='%WS_URL%';" ^
-  "$dest='%WS_DEST%';" ^
-  "$headers=@{ 'User-Agent'='WinSetup' };" ^
-  "$ok=$false;" ^
-  "if (Get-Command curl.exe -ErrorAction SilentlyContinue) {" ^
-  "  try { & curl.exe -fsSL -A WinSetup -o $dest $url; if ((Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -gt 0) { $ok=$true } } catch { }" ^
-  "}" ^
-  "if (-not $ok) {" ^
-  "  for ($a=1; $a -le 3; $a++) { if ($ok) { break }; try { Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -Headers $headers; if ((Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -gt 0) { $ok=$true } } catch { if ($a -lt 3) { Start-Sleep -Seconds (2*$a) } } };" ^
-  "}" ^
-  "if (-not $ok) {" ^
-  "  try { $wc=New-Object System.Net.WebClient; $wc.Headers.Add('User-Agent','WinSetup'); $wc.DownloadFile($url,$dest); $ok=(Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -gt 0 } catch { }" ^
-  "}" ^
-  "if (-not $ok) { Write-Host '[!] Could not download WinSetup.ps1. Check network, proxy, or try again later.' -ForegroundColor Red; exit 1 }"
+if exist "%~dp0WinSetup-BootstrapDownload.ps1" (
+  copy /Y "%~dp0WinSetup-BootstrapDownload.ps1" "%DOWNLOADER%" >nul
+) else if exist "%DOWNLOADER%" (
+  rem cached downloader
+) else (
+  curl.exe -fsSL -A WinSetup -o "%DOWNLOADER%" "%WS_BASE%/WinSetup-BootstrapDownload.ps1" 2>nul
+)
 
-if errorlevel 1 goto :failed
+if not exist "%DOWNLOADER%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%WS_BASE%/WinSetup-BootstrapDownload.ps1' -OutFile '%DOWNLOADER%' -UseBasicParsing -Headers @{UserAgent='WinSetup'}"
+)
+
+if not exist "%DOWNLOADER%" (
+  echo [!] Could not download WinSetup-BootstrapDownload.ps1
+  goto fail
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DOWNLOADER%" -Uri "%WS_URL%" -Dest "%WS_DEST%"
+if errorlevel 1 goto fail
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%WS_DEST%" -ScriptDir "%SCRIPT_DIR%"
+goto end
 
-:afterrun
+:runlocal
+set "SCRIPT_DIR=%TEMP%\WinSetup"
+if not exist "%SCRIPT_DIR%" mkdir "%SCRIPT_DIR%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0WinSetup.ps1" -Local -ScriptDir "%SCRIPT_DIR%"
+goto end
+
+:end
 set "ERR=%ERRORLEVEL%"
-if not "%ERR%"=="0" goto :failed
-exit /b 0
+if not "%ERR%"=="0" goto fail
+endlocal & exit /b 0
 
-:failed
+:fail
+if not defined ERR set "ERR=%ERRORLEVEL%"
+if "%ERR%"=="" set "ERR=1"
 echo.
-echo WinSetup failed (exit %ERR%). See messages above.
+echo WinSetup failed ^(exit %ERR%^). See messages above.
 pause
-exit /b %ERR%
+endlocal & exit /b %ERR%

@@ -209,6 +209,15 @@ function Read-WinSetupChildWarningLog {
     }
 }
 
+function Initialize-WinSetupHttpTls {
+    try {
+        $current = [Net.ServicePointManager]::SecurityProtocol
+        if (($current -band [Net.SecurityProtocolType]::Tls12) -eq 0) {
+            [Net.ServicePointManager]::SecurityProtocol = $current -bor [Net.SecurityProtocolType]::Tls12
+        }
+    } catch { }
+}
+
 function Save-WinSetupReleaseFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -217,13 +226,57 @@ function Save-WinSetupReleaseFile {
         [string]$Destination
     )
 
+    Initialize-WinSetupHttpTls
+
+    $destDir = Split-Path -Parent $Destination
+    if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+
     $prevProgress = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
+    $headers = @{ 'User-Agent' = 'WinSetup' }
+    $maxAttempts = 3
+    $lastException = $null
+
     try {
-        Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing -Headers $headers
+                if ((Test-Path -LiteralPath $Destination) -and (Get-Item -LiteralPath $Destination).Length -gt 0) {
+                    return
+                }
+                throw [System.IO.IOException]::new('Downloaded file is missing or empty.')
+            } catch {
+                $lastException = $_.Exception
+                if (Test-Path -LiteralPath $Destination) {
+                    Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+                }
+                if ($attempt -lt $maxAttempts) {
+                    Start-Sleep -Seconds (2 * $attempt)
+                    continue
+                }
+
+                try {
+                    $webClient = New-Object System.Net.WebClient
+                    $webClient.Headers.Add('User-Agent', 'WinSetup')
+                    $webClient.DownloadFile($Uri, $Destination)
+                    if ((Test-Path -LiteralPath $Destination) -and (Get-Item -LiteralPath $Destination).Length -gt 0) {
+                        return
+                    }
+                } catch {
+                    $lastException = $_.Exception
+                }
+            }
+        }
     } finally {
         $ProgressPreference = $prevProgress
     }
+
+    if ($lastException) {
+        throw $lastException
+    }
+    throw [System.IO.IOException]::new("Failed to download: $Uri")
 }
 
 function Get-WinSetupPauserMarkerPath {
